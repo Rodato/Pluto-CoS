@@ -1,0 +1,28 @@
+# Secrets
+.env
+credentials.json
+token.json
+*.token
+service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+
+# Local data
+notas-granola/
+*.db
+*.sqlite

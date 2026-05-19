@@ -1,0 +1,26 @@
+# Web server (OAuth callback)
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+
+# Scheduler
+apscheduler==3.10.4
+
+# Telegram bot
+python-telegram-bot==21.6
+
+# Google Calendar API + OAuth
+google-api-python-client==2.149.0
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# Supabase / Postgres
+psycopg2-binary==2.9.10
+
+# LLM (OpenRouter via OpenAI-compatible SDK)
+openai==1.54.0
+
+# Utilidades
+python-dotenv==1.0.1
+httpx==0.27.2
+pytz==2024.2
