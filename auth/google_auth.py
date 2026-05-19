@@ -1,115 +1,93 @@
-"""OAuth2 web flow para Google Calendar API (v1: lectura + RSVP).
+"""OAuth2 Installed flow para Google Calendar API.
 
-Single-user: Daniel (daniel@estudio-plural.co). El token se guarda en DB
-(tabla `oauth_tokens`) para sobrevivir restarts en Railway.
+Patrón calcado de ai-mail-forwarder/auth.py, con un ajuste: en un bot
+long-running NO abrimos browser desde el handler — si no hay token, raise.
+La auth se hace con `oauth_local.py` antes de arrancar el bot.
 
-Scope `calendar.events`: necesario para leer y para responder RSVP
-(events.patch sobre attendees[me].responseStatus).
+- Local: `credentials.json` + `token.json` en la raíz del proyecto.
+- Railway: `GOOGLE_CREDENTIALS_JSON` + `GOOGLE_TOKEN_JSON` como env vars
+  (aceptan JSON crudo o base64).
+
+Scope `calendar.events`: leer + events.patch sobre attendees[me].responseStatus.
+Single-user — no se persiste en DB.
 """
 
+import base64
 import json
 import os
-from datetime import datetime, timezone
+import re
+from pathlib import Path
 from typing import Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-from db import client as db
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+]
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
-
-
-def _client_config() -> dict:
-    """Lee el JSON de credenciales Web OAuth desde env var."""
-    raw = os.environ["GOOGLE_WEB_CREDENTIAL_JSON"]
-    return json.loads(raw)
+BASE_DIR = Path(__file__).resolve().parent.parent
+TOKEN_PATH = BASE_DIR / "token.json"
+CREDENTIALS_PATH = BASE_DIR / "credentials.json"
 
 
-def _redirect_uri() -> str:
-    return f"{os.environ['APP_BASE_URL'].rstrip('/')}/oauth/callback"
+def _parse_env_json(value: str) -> dict:
+    """Acepta JSON crudo o base64. Sanea control chars que algunos dashboards
+    (Railway) insertan al pegar JSON largo."""
+    value = value.strip()
+    cleaned = re.sub(r"[\x00-\x1f]+", "", value)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return json.loads(base64.b64decode(value))
 
 
-def _user_id() -> str:
-    return os.environ.get("USER_ID", "daniel")
-
-
-def build_auth_url(state: str) -> str:
-    """URL a la que mandar al usuario para consentimiento Google."""
-    flow = Flow.from_client_config(
-        _client_config(), scopes=SCOPES, redirect_uri=_redirect_uri()
-    )
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",  # forzar entrega de refresh_token siempre
-        state=state,
-    )
-    return auth_url
-
-
-def exchange_code(code: str) -> Credentials:
-    """Intercambia el `code` del callback por Credentials y los persiste en DB."""
-    flow = Flow.from_client_config(
-        _client_config(), scopes=SCOPES, redirect_uri=_redirect_uri()
-    )
-    flow.fetch_token(code=code)
-    creds = flow.credentials
-    _persist(creds)
-    return creds
-
-
-def _persist(creds: Credentials) -> None:
-    expiry = creds.expiry
-    if expiry is not None and expiry.tzinfo is None:
-        expiry = expiry.replace(tzinfo=timezone.utc)
-    db.save_token(
-        user_id=_user_id(),
-        access_token=creds.token,
-        refresh_token=creds.refresh_token,
-        token_expiry=expiry or datetime.now(timezone.utc),
-        scopes=list(creds.scopes or SCOPES),
+def _get_client_config() -> dict:
+    creds_env = os.getenv("GOOGLE_CREDENTIALS_JSON")
+    if creds_env:
+        return _parse_env_json(creds_env)
+    if CREDENTIALS_PATH.exists():
+        return json.loads(CREDENTIALS_PATH.read_text())
+    raise FileNotFoundError(
+        "No hay credenciales de Google. Definí GOOGLE_CREDENTIALS_JSON "
+        "o colocá credentials.json en la raíz del proyecto."
     )
 
 
-def load_credentials() -> Optional[Credentials]:
-    """Reconstruye Credentials desde la DB. None si no hay token guardado."""
-    row = db.get_token(_user_id())
-    if not row:
-        return None
-    cfg = _client_config()
-    web = cfg.get("web") or cfg.get("installed") or {}
-    creds = Credentials(
-        token=row["access_token"],
-        refresh_token=row["refresh_token"],
-        token_uri=web.get("token_uri", "https://oauth2.googleapis.com/token"),
-        client_id=web["client_id"],
-        client_secret=web["client_secret"],
-        scopes=list(row["scopes"]),
-    )
-    creds.expiry = row["token_expiry"].replace(tzinfo=None)  # google lib espera naive UTC
-    return creds
+def _save_token(creds: Credentials) -> None:
+    # En Railway el token viene de env var; no escribimos al disco.
+    if not os.getenv("GOOGLE_TOKEN_JSON"):
+        TOKEN_PATH.write_text(creds.to_json())
 
 
-def refresh_if_needed(creds: Credentials) -> Credentials:
-    """Refresca el access_token si expiró y persiste el nuevo."""
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _persist(creds)
+def get_credentials() -> Credentials:
+    creds: Optional[Credentials] = None
+
+    token_env = os.getenv("GOOGLE_TOKEN_JSON")
+    if token_env:
+        creds = Credentials.from_authorized_user_info(_parse_env_json(token_env), SCOPES)
+    elif TOKEN_PATH.exists():
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    else:
+        raise RuntimeError(
+            "No hay token de Google. Corré primero:\n"
+            "    .venv/bin/python oauth_local.py"
+        )
+
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            _save_token(creds)
+        else:
+            raise RuntimeError(
+                "Token de Google inválido y sin refresh_token. "
+                "Regenerá con .venv/bin/python oauth_local.py"
+            )
+
     return creds
 
 
 def get_calendar_service():
-    """Devuelve un servicio autenticado de Google Calendar API v3.
-
-    Lanza RuntimeError si el usuario aún no autorizó (cliente debe pedir /autorizar).
-    """
-    creds = load_credentials()
-    if creds is None:
-        raise RuntimeError(
-            "No hay credenciales guardadas. Corré /autorizar en Telegram primero."
-        )
-    creds = refresh_if_needed(creds)
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    """Devuelve un servicio autenticado de Google Calendar API v3."""
+    return build("calendar", "v3", credentials=get_credentials(), cache_discovery=False)

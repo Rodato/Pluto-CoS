@@ -1,21 +1,14 @@
 -- Schema (Neon) para calendar-planner
--- v1: oauth_tokens + seen_invitations
+-- v1: seen_invitations
 -- Fase 1 CoS agent: + tasks + processed_notes
 -- v2 (futuro): pending_proposals (comentada al final)
+--
+-- OAuth: el token se guarda en token.json (local) o GOOGLE_TOKEN_JSON
+-- (Railway env var). NO en DB.
 
 -- ============================================================
 -- v1 — Calendar read + RSVP + notificaciones de invitaciones
 -- ============================================================
-
--- Token OAuth de Google (single-user, schema soporta multi)
-CREATE TABLE IF NOT EXISTS oauth_tokens (
-    user_id TEXT PRIMARY KEY,
-    access_token TEXT NOT NULL,
-    refresh_token TEXT NOT NULL,
-    token_expiry TIMESTAMPTZ NOT NULL,
-    scopes TEXT[] NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 
 -- Invitaciones que el bot ya notificó por Telegram (anti-spam)
 -- + estado del RSVP que hizo el usuario desde los botones inline.

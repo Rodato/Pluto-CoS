@@ -1,4 +1,4 @@
-# Web server (OAuth callback)
+# Web server (healthcheck para Railway)
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
 
@@ -14,7 +14,10 @@ google-auth==2.35.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 
-# Supabase / Postgres
+# OAuth local flow (oauth_local.py)
+flask==3.0.3
+
+# Neon (Postgres)
 psycopg2-binary==2.9.10
 
 # LLM (OpenRouter via OpenAI-compatible SDK)

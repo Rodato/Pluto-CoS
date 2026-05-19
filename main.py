@@ -1,21 +1,21 @@
-"""Entry point: FastAPI (OAuth callback) + APScheduler + Telegram bot.
+"""Entry point: FastAPI (healthcheck) + APScheduler + Telegram bot.
 
 Los tres componentes corren en el mismo proceso (mismo event loop) para Railway:
-- FastAPI sirve `/oauth/login` y `/oauth/callback`
+- FastAPI sirve solo `/` como healthcheck (Railway necesita PORT abierto)
 - APScheduler dispara el chequeo de invitaciones cada 15 min
 - python-telegram-bot queda en polling
+
+La autorización OAuth se hace **localmente** corriendo `oauth_local.py` una
+sola vez; el token resultante se pega como `GOOGLE_TOKEN_JSON` en Railway.
 """
 
-import asyncio
 import contextlib
 import logging
 import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, RedirectResponse
 
-from auth import google_auth
 from scheduler import build_scheduler, check_new_invitations
 from telegram_bot import bot as tg_bot
 from telegram_bot import handlers as tg_handlers
@@ -64,30 +64,6 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def root():
     return {"service": "calendar-planner", "status": "ok"}
-
-
-@app.get("/oauth/login")
-async def oauth_login():
-    """Redirige al consentimiento de Google."""
-    import secrets
-    state = secrets.token_urlsafe(16)
-    url = google_auth.build_auth_url(state=state)
-    return RedirectResponse(url=url)
-
-
-@app.get("/oauth/callback")
-async def oauth_callback(code: str, state: str = ""):
-    """Intercambia el code por tokens y los guarda en DB."""
-    try:
-        google_auth.exchange_code(code)
-    except Exception as exc:
-        log.exception("Error en OAuth callback")
-        return HTMLResponse(
-            f"<h1>Error</h1><pre>{exc}</pre>", status_code=500
-        )
-    return HTMLResponse(
-        "<h1>✅ Autorizado</h1><p>Ya podés cerrar esta pestaña y volver a Telegram.</p>"
-    )
 
 
 def _run() -> None:

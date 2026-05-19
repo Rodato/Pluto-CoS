@@ -1,11 +1,10 @@
-"""Único punto de acceso a Supabase.
+"""Único punto de acceso a Neon (Postgres).
 
 REGLA DURA: SQL siempre parametrizado con %s, nunca f-strings con datos externos.
 """
 
 import os
 from contextlib import contextmanager
-from datetime import datetime
 from typing import Optional
 
 import psycopg2
@@ -33,46 +32,6 @@ def get_cursor():
             yield cur
         finally:
             cur.close()
-
-
-# ============================================================
-# oauth_tokens
-# ============================================================
-
-def get_token(user_id: str) -> Optional[dict]:
-    """Devuelve el registro de token del usuario, o None si no existe."""
-    with get_cursor() as cur:
-        cur.execute(
-            "SELECT user_id, access_token, refresh_token, token_expiry, scopes, updated_at "
-            "FROM oauth_tokens WHERE user_id = %s",
-            (user_id,),
-        )
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def save_token(
-    user_id: str,
-    access_token: str,
-    refresh_token: str,
-    token_expiry: datetime,
-    scopes: list[str],
-) -> None:
-    """Inserta o actualiza el token del usuario."""
-    with get_cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO oauth_tokens (user_id, access_token, refresh_token, token_expiry, scopes, updated_at)
-            VALUES (%s, %s, %s, %s, %s, now())
-            ON CONFLICT (user_id) DO UPDATE SET
-                access_token = EXCLUDED.access_token,
-                refresh_token = EXCLUDED.refresh_token,
-                token_expiry = EXCLUDED.token_expiry,
-                scopes = EXCLUDED.scopes,
-                updated_at = now()
-            """,
-            (user_id, access_token, refresh_token, token_expiry, scopes),
-        )
 
 
 # ============================================================

@@ -2,7 +2,7 @@
 
 ## Documentación (Obsidian)
 Notas en: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Documentición codigo/Calendar Planner/`
-Actualizar cuando cambien: esquema Supabase, flujo OAuth, comandos del bot, deployment Railway, stack, **scope vigente (v1 vs v2)**.
+Actualizar cuando cambien: esquema Neon, flujo OAuth, comandos del bot, deployment Railway, stack, **scope/fase vigente (v1 / Fase 1 CoS / etc.)**.
 No actualizar por: bugfixes menores, ajustes de mensajes del bot, cambios de copy.
 
 ## Scope vigente: v1 (2026-05-11 →)
@@ -16,13 +16,23 @@ Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co) con alcance **ac
 **No incluido en v1** (queda para v2): pipeline del vault de Granola, extracción de tareas, propuestas de bloques, **creación / edición / borrado de eventos**, envío de mensajes libres a attendees (Gmail).
 
 ## Stack
-- **FastAPI + Uvicorn** — servidor OAuth callback
-- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas)
+- **FastAPI + Uvicorn** — healthcheck (`/`) para Railway. **Ya no sirve OAuth**.
+- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas) + cron diario 8 AM (briefing CoS, Fase 1)
 - **python-telegram-bot 21.6** — bot
-- **Google Calendar API v3** + OAuth2 **web flow** (scope `calendar.events` para soportar RSVP)
-- **Supabase** (psycopg2) — `oauth_tokens`, `seen_invitations` (v1). `processed_notes`, `pending_proposals` reservadas para v2.
+- **Google Calendar API v3** + OAuth2 **Installed flow** (scope `calendar.events`). Token se genera local con `oauth_local.py` y se pega en Railway como env var.
+- **Neon** (psycopg2) — `seen_invitations` (v1) + `tasks`, `processed_notes` (Fase 1 CoS). `pending_proposals` reservada para v2.
 - **OpenRouter** vía SDK `openai` (base_url=`https://openrouter.ai/api/v1`)
 - **Deploy:** Railway
+
+## Pivot a agente CoS (2026-05-19)
+El norte cambió de "v2 = pipeline Granola" a **briefing matutino tipo Chief-of-Staff**: cada mañana 8 AM, leer 5 fuentes (Calendar, Granola/Obsidian, sparring pages, Gmail, Slack), extraer tareas/compromisos con LLM, priorizar P0–P3, persistir en Neon (`tasks`), entregar por Telegram. Las fuentes se suman por fases:
+
+- **Fase 1**: Calendar + Granola → Telegram briefing P0–P3
+- **Fase 2**: + Gmail
+- **Fase 3**: + Slack
+- **Fase 4**: + sparring pages + loop de aprendizaje
+
+El v1 (calendar read + RSVP cada 15 min) sigue corriendo en paralelo.
 
 ## Correr en local
 
@@ -38,18 +48,20 @@ python3 -m venv .venv
 ```
 
 ## Variables de entorno clave
-- `DATABASE_URL` — Supabase connection string
+- `DATABASE_URL` — Neon connection string (con `?sslmode=require`)
 - `TELEGRAM_TOKEN` — token del bot (BotFather)
 - `TELEGRAM_CHAT_ID` — único chat autorizado (Daniel). Cualquier otro chat se ignora.
 - `OPENROUTER_API_KEY` — API key OpenRouter
 - `OPENROUTER_MODEL` — default `anthropic/claude-sonnet-4-6`
-- `APP_BASE_URL` — URL pública Railway para callback OAuth
-- `GOOGLE_WEB_CREDENTIAL_JSON` — contenido completo del `credentials.json` (web OAuth)
-- `USER_ID` — identificador del usuario en `oauth_tokens` (default `"daniel"`)
+- `USER_ID` — identificador interno del usuario (default `"daniel"`)
 - `USER_EMAIL` — email del usuario en Google Calendar (default `daniel@estudio-plural.co`). Se usa para identificar `attendees[me]`.
 - `TZ_NAME` — timezone para slots/horario laboral (default `America/Bogota`)
+- `BRIEFING_HOUR` — hora del briefing matutino CoS (default `8`)
+- `OBSIDIAN_VAULT_LOCAL_PATH` — solo local, path al vault iCloud: `/Users/daniel/Library/Mobile Documents/iCloud~md~obsidian/Documents/Estudio Plural`
 
-Reservadas para v2 (no requeridas en v1): `NOTAS_REPO_URL`, `NOTAS_LOCAL_PATH`.
+**Solo Railway** (en local se leen archivos del disco):
+- `GOOGLE_CREDENTIALS_JSON` — base64 de `credentials.json` (shared con ai-mail-forwarder)
+- `GOOGLE_TOKEN_JSON` — base64 de `token.json` (sale de correr `oauth_local.py` local)
 
 ## Reglas duras (no romper)
 
@@ -97,7 +109,7 @@ Cada 15 min
 | `/semana` | Agenda de la semana |
 | `/libre <fecha hora>` | "/libre martes 3pm" → ¿hay algo a esa hora? |
 | `/revisar` | Fuerza chequeo manual de invitaciones (sin esperar al cron) |
-| `/autorizar` | Arranca OAuth flow (devuelve link a `APP_BASE_URL/oauth/login`) |
+| `/autorizar` | Devuelve instrucciones para correr `oauth_local.py` (la auth es local, no se hace por Telegram) |
 
 Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre la agenda (tool calling sobre wrappers de calendar).
 
@@ -106,17 +118,20 @@ Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre 
 - `Rodato/notas-granola` (privado, notas — solo v2)
 
 ## Onboarding (primera vez)
-1. `/autorizar` en Telegram → link al OAuth flow
-2. Browser → consentimiento Google → callback a `APP_BASE_URL/oauth/callback`
-3. Tokens guardados en `oauth_tokens` (refresh_token persistente)
-4. A partir de ahí el bot puede leer Calendar y responder RSVP sin más intervención
+1. `cp ../ai-mail-forwarder/credentials.json .` (shared OAuth client)
+2. `.venv/bin/python oauth_local.py` → browser → consentimiento Google → `token.json` queda guardado local + base64 mostrado
+3. Para Railway: pegar el base64 como `GOOGLE_TOKEN_JSON` (y `GOOGLE_CREDENTIALS_JSON` también base64 con `base64 -i credentials.json | pbcopy`)
+4. A partir de ahí el bot lee Calendar y responde RSVP sin más intervención. Refresh tokens no caducan (app "In Production" en Google Cloud).
 
-## Roadmap a v2 (vault de Granola)
-Cuando v1 esté estable, retomar:
-- `obsidian/reader.py` — listar .md nuevos/modificados
-- `obsidian/parser.py` — extraer tareas con LLM del cuerpo completo
-- `llm/planner.propose_work_blocks` — mapear tareas → slots libres → propuestas
-- `pending_proposals` + `processed_notes` (ya en schema, comentadas como v2)
-- Relajar regla "solo lee + RSVP" para permitir `events.insert` tras confirmación
-- Cron extra 8:00 / 12:00 L-V para el scan de notas
-- Sync `launchd` en Mac → repo `Rodato/notas-granola`
+## Roadmap (pivot CoS 2026-05-19)
+
+**Fase 1 — siguiente**: briefing matutino 8 AM Bogotá
+- Cron diario en `scheduler.py` (existe el cron de 15 min de invitaciones; sumar uno diario)
+- Pipeline: `calendar_api` + `obsidian/reader.py` + `obsidian/parser.py` (ya hay esqueleto) → LLM extrae tareas → priorizar P0–P3 → insert en `tasks` (Neon) → mensaje a Telegram
+- Generar `Briefings/YYYY-MM-DD.md` en el vault (read-only desde el bot)
+
+**Fase 2**: Gmail (compromisos en enviados + sin responder).
+**Fase 3**: Slack (bloqueos del equipo).
+**Fase 4**: sparring pages en Obsidian + loop priorizado vs hecho.
+
+Cuando se entre a la fase de creación de eventos (post-Fase 4), relajar la regla "solo lee + RSVP" para permitir `events.insert` tras confirmación. Descomentar `pending_proposals` en el schema.

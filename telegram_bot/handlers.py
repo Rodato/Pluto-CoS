@@ -6,7 +6,7 @@ Comandos:
 - /semana     → agenda de la semana
 - /libre      → "/libre martes 3pm" → ¿hay algo a esa hora?
 - /revisar    → fuerza chequeo manual de invitaciones (sin esperar al cron)
-- /autorizar  → link al OAuth flow
+- /autorizar  → instrucciones para correr el OAuth flow local
 
 Callbacks:
 - rsvp:<accepted|declined|tentative>:<event_id>  → events.patch + DB update
@@ -18,7 +18,6 @@ import asyncio
 import html
 import logging
 import os
-import secrets
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Callable
@@ -39,7 +38,6 @@ from telegram.ext import (
     filters,
 )
 
-from auth import google_auth
 from calendar_api import client as cal_client
 from db import client as db
 from llm import query as llm_query
@@ -89,12 +87,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def cmd_autorizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    state = secrets.token_urlsafe(16)
-    url = google_auth.build_auth_url(state=state)
     await update.message.reply_text(
-        f"🔐 Autorizá Google Calendar:\n{url}\n\n"
-        "Hacé clic, da consentimiento y volvé. El bot guardará el token.",
-        disable_web_page_preview=True,
+        "🔐 La autorización de Google se hace localmente:\n\n"
+        "1. En tu Mac, corré:\n"
+        "   <code>.venv/bin/python oauth_local.py</code>\n"
+        "2. Se abre el browser. Consentís con tu cuenta Google.\n"
+        "3. Se guarda <code>token.json</code> local y se muestra el base64 para pegar en Railway como <code>GOOGLE_TOKEN_JSON</code>.\n\n"
+        "Tokens no caducan (la app está In Production en Google Cloud).",
+        parse_mode=ParseMode.HTML,
     )
 
 
