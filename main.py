@@ -14,13 +14,14 @@ import logging
 import os
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI
 
 from scheduler import build_scheduler, check_new_invitations
 from telegram_bot import bot as tg_bot
 from telegram_bot import handlers as tg_handlers
-
-load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
