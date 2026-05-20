@@ -25,6 +25,8 @@ from pathlib import Path
 from briefing.prioritizer import PrioritizedTask, prioritize, prioritize_open_tasks
 from calendar_api import client as cal_client
 from db import client as db
+from gmail_api.client import PendingThread, list_pending_for_reply
+from llm.email_filter import filter_actionable
 from obsidian.parser import ExtractedTask, extract_tasks
 from obsidian.reader import list_new_or_modified_notes, project_from_path, read_note
 
@@ -41,6 +43,8 @@ class BriefingResult:
     prioritized: List[PrioritizedTask] = field(default_factory=list)
     notes_processed: int = 0
     notes_skipped_age: int = 0
+    emails_pending: int = 0       # threads heurísticos
+    emails_actionable: int = 0    # los que el LLM marcó como accionables
 
 
 def _tz() -> ZoneInfo:
@@ -120,29 +124,78 @@ def _extract_from_granola(window_start_local: datetime) -> tuple[List[ExtractedT
     return all_tasks, processed, skipped
 
 
-def _persist_prioritized(prioritized: List[PrioritizedTask], briefing_date: date) -> None:
+def _persist_prioritized(
+    prioritized: List[PrioritizedTask],
+    briefing_date: date,
+    source: str = "granola",
+) -> None:
     user_id = _user_id()
     for pt in prioritized:
         source_ref = f"{pt.source_note}::{pt.title.lower().strip()[:100]}"
         try:
-            if db.task_exists_for_source("granola", source_ref):
+            if db.task_exists_for_source(source, source_ref):
                 continue
             description = pt.context
             if pt.deadline_hint:
                 description = (description + f"\n\nDeadline: {pt.deadline_hint}").strip()
-            project = project_from_path(Path(pt.source_note)) if pt.source_note else "Varios"
+            project = pt.project
+            if not project:
+                project = (
+                    project_from_path(Path(pt.source_note)) if pt.source_note else "Varios"
+                )
             db.insert_task(
                 user_id=user_id,
                 title=pt.title,
                 description=description or None,
                 priority=pt.priority,
                 project=project,
-                source="granola",
+                source=source,
                 source_ref=source_ref,
                 briefing_date=briefing_date,
             )
         except Exception:
             log.exception("Error persistiendo tarea %r", pt.title)
+
+
+def _extract_from_gmail(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
+    """Lista correos pendientes, filtra con LLM, devuelve como ExtractedTask.
+
+    Devuelve (tasks, pending_count, actionable_count).
+    """
+    try:
+        threads = list_pending_for_reply(days=days)
+    except Exception:
+        log.exception("Error listando correos pendientes")
+        return [], 0, 0
+
+    if not threads:
+        return [], 0, 0
+
+    try:
+        actionable = filter_actionable(threads)
+    except Exception:
+        log.exception("Error filtrando correos")
+        return [], len(threads), 0
+
+    tasks: List[ExtractedTask] = []
+    for em in actionable:
+        from_short = em.from_addr.split("<")[0].strip() or em.from_addr
+        title = f"Responder: {em.subject[:80]}".strip()
+        context = (
+            f"De: {from_short}\n"
+            f"Acción sugerida: {em.suggested_action}\n"
+            f"Por qué: {em.reason}"
+        )
+        tasks.append(ExtractedTask(
+            title=title,
+            context=context,
+            estimated_minutes=None,
+            deadline_hint=None,
+            source_note=em.thread_id,
+            source="gmail",
+            project="Correos",
+        ))
+    return tasks, len(threads), len(actionable)
 
 
 def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
@@ -162,13 +215,19 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
     today_events = _today_events(today_local)
     user_id = _user_id()
 
-    # 1. Ingesta de notas nuevas dentro de la ventana (esta semana + anterior).
+    # 1a. Ingesta Granola: notas nuevas dentro de la ventana (esta semana + anterior).
     window_start = _window_start(briefing_date, tz)
     log.info("Ventana de notas: desde %s", window_start.isoformat())
-    extracted, processed, skipped = _extract_from_granola(window_start)
-    if extracted:
-        new_prioritized = prioritize(extracted, today_iso=briefing_date.isoformat())
-        _persist_prioritized(new_prioritized, briefing_date)
+    granola_tasks, processed, skipped = _extract_from_granola(window_start)
+    if granola_tasks:
+        new_prioritized = prioritize(granola_tasks, today_iso=briefing_date.isoformat())
+        _persist_prioritized(new_prioritized, briefing_date, source="granola")
+
+    # 1b. Ingesta Gmail: correos pendientes filtrados por LLM (últimos 7 días).
+    gmail_tasks, emails_pending, emails_actionable = _extract_from_gmail(days=7)
+    if gmail_tasks:
+        new_prioritized = prioritize(gmail_tasks, today_iso=briefing_date.isoformat())
+        _persist_prioritized(new_prioritized, briefing_date, source="gmail")
 
     # 2. Repriorización del estado completo
     try:
@@ -195,4 +254,6 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         prioritized=prioritized,
         notes_processed=processed,
         notes_skipped_age=skipped,
+        emails_pending=emails_pending,
+        emails_actionable=emails_actionable,
     )

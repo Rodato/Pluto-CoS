@@ -79,6 +79,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/libre — slots libres\n"
         "/revisar — chequear invitaciones ya\n"
         "/briefing — generar briefing matutino on-demand\n"
+        "/correos — correos pendientes de respuesta\n"
         "/autorizar — conectar Google Calendar\n\n"
         "También podés escribirme en lenguaje natural ('¿qué tengo el viernes?', "
         "'¿cuándo tengo libre esta semana?')."
@@ -193,6 +194,55 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@authorized_only
+async def cmd_correos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista correos que requieren respuesta — heurística Gmail + filtro LLM."""
+    from gmail_api.client import gmail_link, list_pending_for_reply
+    from llm.email_filter import filter_actionable
+
+    await update.message.chat.send_action("typing")
+    try:
+        threads = await asyncio.to_thread(list_pending_for_reply, 7, 50)
+    except RuntimeError:
+        await update.message.reply_text("No estás autorizado para Gmail. Reautorizá con /autorizar.")
+        return
+    except Exception as exc:
+        log.exception("Error listando correos pendientes")
+        await update.message.reply_text(f"⚠️ Error consultando Gmail: {exc}")
+        return
+
+    if not threads:
+        await update.message.reply_text("📭 No hay correos pendientes en los últimos 7 días.")
+        return
+
+    actionable = await asyncio.to_thread(filter_actionable, threads)
+    if not actionable:
+        await update.message.reply_text(
+            f"📭 De {len(threads)} correos pendientes ninguno parece pedir respuesta concreta."
+        )
+        return
+
+    lines = [f"📬 <b>Correos que esperan respuesta</b> ({len(actionable)} de {len(threads)} pendientes)"]
+    for em in actionable[:15]:
+        subject = html.escape(em.subject[:80])
+        from_short = html.escape(em.from_addr.split("<")[0].strip() or em.from_addr)
+        link = gmail_link(em.thread_id)
+        lines.append(
+            f"\n• <a href=\"{link}\"><b>{subject}</b></a>\n"
+            f"  <i>De: {from_short}</i>\n"
+            f"  → {html.escape(em.suggested_action)}\n"
+            f"  <i>{html.escape(em.reason)}</i>"
+        )
+    if len(actionable) > 15:
+        lines.append(f"\n<i>+ {len(actionable) - 15} más en Gmail</i>")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 # ============================================================
 # Callback RSVP
 # ============================================================
@@ -260,5 +310,6 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("libre", cmd_libre))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
+    app.add_handler(CommandHandler("correos", cmd_correos))
     app.add_handler(CallbackQueryHandler(on_rsvp, pattern=r"^rsvp:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

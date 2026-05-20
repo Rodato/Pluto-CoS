@@ -25,6 +25,7 @@ from googleapiclient.discovery import build
 
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -91,3 +92,8 @@ def get_credentials() -> Credentials:
 def get_calendar_service():
     """Devuelve un servicio autenticado de Google Calendar API v3."""
     return build("calendar", "v3", credentials=get_credentials(), cache_discovery=False)
+
+
+def get_gmail_service():
+    """Devuelve un servicio autenticado de Gmail API v1."""
+    return build("gmail", "v1", credentials=get_credentials(), cache_discovery=False)

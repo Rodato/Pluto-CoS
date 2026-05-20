@@ -125,6 +125,7 @@ def prioritize(tasks: List[ExtractedTask], today_iso: str) -> List[PrioritizedTa
                 context=t.context,
                 estimated_minutes=t.estimated_minutes,
                 deadline_hint=t.deadline_hint,
+                project=t.project,
             )
         )
     return result
@@ -140,6 +141,7 @@ def _fallback(tasks: List[ExtractedTask], priority: str, rationale: str) -> List
             context=t.context,
             estimated_minutes=t.estimated_minutes,
             deadline_hint=t.deadline_hint,
+            project=t.project,
         )
         for t in tasks
     ]

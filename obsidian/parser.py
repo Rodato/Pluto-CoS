@@ -24,6 +24,8 @@ class ExtractedTask:
     estimated_minutes: Optional[int]
     deadline_hint: Optional[str]
     source_note: str
+    source: str = "granola"          # granola | gmail | slack | ...
+    project: Optional[str] = None    # si None, el builder lo calcula del path
 
 
 _SYSTEM_PROMPT = """Sos un asistente que extrae tareas accionables de notas de reuniones para Daniel (CTO de Estudio Plural).
