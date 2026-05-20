@@ -78,6 +78,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/semana — agenda de la semana\n"
         "/libre — slots libres\n"
         "/revisar — chequear invitaciones ya\n"
+        "/briefing — generar briefing matutino on-demand\n"
         "/autorizar — conectar Google Calendar\n\n"
         "También podés escribirme en lenguaje natural ('¿qué tengo el viernes?', "
         "'¿cuándo tengo libre esta semana?')."
@@ -165,6 +166,33 @@ async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@authorized_only
+async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Genera el briefing on-demand sin esperar al cron de las 8 AM."""
+    from briefing.builder import build_briefing
+    from briefing.render import render_markdown, render_telegram
+    from briefing.vault_writer import write_briefing
+
+    await update.message.chat.send_action("typing")
+    try:
+        briefing = await asyncio.to_thread(build_briefing)
+    except Exception as exc:
+        log.exception("Error construyendo briefing")
+        await update.message.reply_text(f"⚠️ Error construyendo el briefing: {exc}")
+        return
+
+    try:
+        await asyncio.to_thread(write_briefing, briefing.briefing_date, render_markdown(briefing))
+    except Exception:
+        log.exception("Error escribiendo briefing al vault (sigo con Telegram)")
+
+    await update.message.reply_text(
+        render_telegram(briefing),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 # ============================================================
 # Callback RSVP
 # ============================================================
@@ -231,5 +259,6 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("semana", cmd_semana))
     app.add_handler(CommandHandler("libre", cmd_libre))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
+    app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(CallbackQueryHandler(on_rsvp, pattern=r"^rsvp:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

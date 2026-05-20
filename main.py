@@ -19,7 +19,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 
-from scheduler import build_scheduler, check_new_invitations
+from scheduler import build_scheduler, check_new_invitations, run_daily_briefing
 from telegram_bot import bot as tg_bot
 from telegram_bot import handlers as tg_handlers
 
@@ -35,10 +35,13 @@ async def lifespan(app: FastAPI):
     tg_app = tg_bot.build_app()
     tg_handlers.register(tg_app)
 
-    async def _job():
+    async def _invitations_job():
         await check_new_invitations(tg_app)
 
-    scheduler = build_scheduler(_job)
+    async def _briefing_job():
+        await run_daily_briefing(tg_app)
+
+    scheduler = build_scheduler(_invitations_job, _briefing_job)
 
     await tg_app.initialize()
     await tg_app.start()

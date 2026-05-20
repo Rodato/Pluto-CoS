@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     title TEXT NOT NULL,
     description TEXT,
     priority TEXT NOT NULL CHECK (priority IN ('P0','P1','P2','P3')),
+    project TEXT,                     -- carpeta dentro de Granola/ (AMA, Puddle, etc.) o "Varios"
     source TEXT NOT NULL CHECK (source IN ('calendar','granola','sparring','gmail','slack','manual')),
     source_ref TEXT,                  -- event_id | note_path | email_id | slack_ts
     status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','snoozed','dropped')),
