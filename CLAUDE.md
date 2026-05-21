@@ -116,8 +116,11 @@ Cada 15 min
 Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre la agenda (tool calling sobre wrappers de calendar).
 
 ## Repos GitHub
-- `Rodato/calendar-planner` (este repo, código)
-- `Rodato/notas-granola` (privado, notas — solo v2)
+- `Rodato/Pluto-CoS` (este repo, código — público). Local: `~/Desktop/Dev/calendar-planner`. El nombre del directorio local se mantiene `calendar-planner` por historia.
+- `Rodato/obsidian-estudio-plural` (privado, vault de Obsidian sincronizado por plugin Obsidian Git — Railway lo clona al startup via `OBSIDIAN_VAULT_GIT_REPO`)
+
+## Deploy
+- **Railway** con `Dockerfile` (no nixpacks/railpack). Railway usa Railpack por default y un `nixpacks.toml` es silenciosamente ignorado. Si necesitás system deps (como `git` para clonar el vault), editá el `Dockerfile`.
 
 ## Onboarding (primera vez)
 1. `cp ../ai-mail-forwarder/credentials.json .` (shared OAuth client)
