@@ -26,3 +26,6 @@ venv/
 notas-granola/
 *.db
 *.sqlite
+
+# Vault backups (one-off tarballs)
+.backup-*.tar.gz

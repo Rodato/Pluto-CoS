@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from obsidian.git_sync import pull_vault
+
 MIN_BODY_CHARS = 100
 
 GRANOLA_SUBDIR = "Granola"
@@ -136,6 +138,7 @@ def list_new_or_modified_notes(
 
     Filtra notas shell (sin contenido real más allá del título).
     """
+    pull_vault()
     base = granola_path(vault_path) if vault_path else granola_path()
     if not base.exists():
         return []

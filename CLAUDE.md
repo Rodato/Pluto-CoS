@@ -62,6 +62,8 @@ python3 -m venv .venv
 **Solo Railway** (en local se leen archivos del disco):
 - `GOOGLE_CREDENTIALS_JSON` — base64 de `credentials.json` (shared con ai-mail-forwarder)
 - `GOOGLE_TOKEN_JSON` — base64 de `token.json` (sale de correr `oauth_local.py` local)
+- `RAILWAY_ENVIRONMENT` — lo setea Railway automáticamente; activa `bootstrap_vault()` + `pull_vault()` en `obsidian/git_sync.py`
+- `OBSIDIAN_VAULT_GIT_REPO` — URL HTTPS+token del repo `Rodato/obsidian-estudio-plural` (formato `https://<user>:<token>@github.com/Rodato/obsidian-estudio-plural.git`). En local el vault vive en iCloud; en Railway se clona desde GitHub al startup.
 
 ## Reglas duras (no romper)
 

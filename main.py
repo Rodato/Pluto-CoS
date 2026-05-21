@@ -19,6 +19,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 
+from obsidian.git_sync import bootstrap_vault
 from scheduler import build_scheduler, check_new_invitations, run_daily_briefing
 from telegram_bot import bot as tg_bot
 from telegram_bot import handlers as tg_handlers
@@ -32,6 +33,8 @@ log = logging.getLogger("calendar-planner")
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    bootstrap_vault()
+
     tg_app = tg_bot.build_app()
     tg_handlers.register(tg_app)
 
