@@ -173,3 +173,34 @@ def update_task_priority(task_id: str, priority: str) -> None:
             """,
             (priority, task_id),
         )
+
+
+def update_task_status(task_id: str, status: str) -> None:
+    """Marca una tarea como done/snoozed/dropped. Setea completed_at si done."""
+    if status not in {"open", "done", "snoozed", "dropped"}:
+        raise ValueError(f"status inválido: {status!r}")
+    completed_at = "now()" if status == "done" else "NULL"
+    with get_cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE tasks
+            SET status = %s, updated_at = now(), completed_at = {completed_at}
+            WHERE id = %s
+            """,
+            (status, task_id),
+        )
+
+
+def get_task(task_id: str) -> Optional[dict]:
+    """Lee una tarea por id."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, title, priority, status, project, source
+            FROM tasks
+            WHERE id = %s
+            """,
+            (task_id,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None

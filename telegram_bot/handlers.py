@@ -27,7 +27,7 @@ try:
 except ImportError:  # pragma: no cover
     from backports.zoneinfo import ZoneInfo  # type: ignore
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -81,6 +81,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/briefing — generar briefing matutino on-demand\n"
         "/correos — correos pendientes de respuesta\n"
         "/slack — mensajes Slack pendientes\n"
+        "/pendientes — lista de tareas abiertas + botones ✅\n"
         "/autorizar — conectar Google Calendar\n\n"
         "También podés escribirme en lenguaje natural ('¿qué tengo el viernes?', "
         "'¿cuándo tengo libre esta semana?')."
@@ -244,6 +245,119 @@ async def cmd_correos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+PRIORITY_EMOJI_MAP = {"P0": "🔴", "P1": "🟠", "P2": "🟡", "P3": "🟢"}
+PRIORITY_LABEL_MAP = {
+    "P0": "Bloquea hoy",
+    "P1": "Compromiso esta semana",
+    "P2": "Foco CTO esta semana",
+    "P3": "Medio plazo / admin",
+}
+PENDIENTES_TOP_PER_PRIORITY = 5
+PENDIENTES_PRIORITIES = ("P0", "P1", "P2", "P3")
+
+
+@authorized_only
+async def cmd_pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista top open tasks por priority con botones ✅ para marcar como done."""
+    import os
+    user_id = os.environ.get("USER_ID", "daniel")
+
+    await update.message.chat.send_action("typing")
+    try:
+        all_open = await asyncio.to_thread(db.list_open_tasks, user_id)
+    except Exception as exc:
+        log.exception("Error listando open tasks")
+        await update.message.reply_text(f"⚠️ Error: {exc}")
+        return
+
+    if not all_open:
+        await update.message.reply_text("📭 No tenés tareas abiertas. Buen trabajo.")
+        return
+
+    # Agrupar y cap por priority
+    grouped: dict = {p: [] for p in PENDIENTES_PRIORITIES}
+    for t in all_open:
+        prio = t.get("priority", "P2")
+        grouped.setdefault(prio, []).append(t)
+
+    lines = ["📋 <b>Tareas pendientes</b> — tocá ✅ para marcar hecha"]
+    button_rows: list = []
+    current_row: list = []
+    counter = 0
+    shown_tasks: list = []  # mantenemos orden para el mapping número→task_id
+
+    for prio in PENDIENTES_PRIORITIES:
+        items = grouped.get(prio, [])
+        if not items:
+            continue
+        emoji = PRIORITY_EMOJI_MAP.get(prio, "•")
+        total = len(items)
+        shown_items = items[:PENDIENTES_TOP_PER_PRIORITY]
+        header = f"\n{emoji} <b>{prio}</b>"
+        if total > len(shown_items):
+            header += f" <i>({len(shown_items)} de {total})</i>"
+        lines.append(header)
+        for t in shown_items:
+            counter += 1
+            shown_tasks.append(t)
+            project = t.get("project") or "Varios"
+            title = t.get("title") or "(sin título)"
+            lines.append(
+                f"<b>{counter}.</b> {html.escape(title)} <i>· {html.escape(project)}</i>"
+            )
+            # callback_data: done:<uuid>  (max 64 bytes; uuid es 36 chars)
+            btn = InlineKeyboardButton(
+                text=f"✅ {counter}",
+                callback_data=f"done:{t.get('id')}",
+            )
+            current_row.append(btn)
+            if len(current_row) == 4:
+                button_rows.append(current_row)
+                current_row = []
+    if current_row:
+        button_rows.append(current_row)
+
+    reply_markup = InlineKeyboardMarkup(button_rows) if button_rows else None
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup,
+        disable_web_page_preview=True,
+    )
+
+
+@authorized_only
+async def on_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback handler: marca una tarea como done y quita el botón del keyboard."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        _, task_id = query.data.split(":", 1)
+    except ValueError:
+        return
+
+    try:
+        await asyncio.to_thread(db.update_task_status, task_id, "done")
+    except Exception as exc:
+        log.exception("Error marcando task done")
+        await query.answer(f"⚠️ {exc}", show_alert=True)
+        return
+
+    # Quitar este botón del keyboard pero mantener los demás.
+    new_rows = []
+    for row in (query.message.reply_markup.inline_keyboard if query.message.reply_markup else []):
+        new_row = [b for b in row if b.callback_data != query.data]
+        if new_row:
+            new_rows.append(new_row)
+    new_markup = InlineKeyboardMarkup(new_rows) if new_rows else None
+    try:
+        await query.edit_message_reply_markup(reply_markup=new_markup)
+    except Exception:
+        pass
+
+    await query.answer("✅ Marcada como hecha")
+
+
 @authorized_only
 async def cmd_slack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista mensajes de Slack que requieren tu respuesta — DMs + menciones + LLM filter."""
@@ -370,5 +484,7 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(CommandHandler("correos", cmd_correos))
     app.add_handler(CommandHandler("slack", cmd_slack))
+    app.add_handler(CommandHandler("pendientes", cmd_pendientes))
+    app.add_handler(CallbackQueryHandler(on_task_done, pattern=r"^done:"))
     app.add_handler(CallbackQueryHandler(on_rsvp, pattern=r"^rsvp:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
