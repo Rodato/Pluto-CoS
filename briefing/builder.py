@@ -26,9 +26,11 @@ from briefing.prioritizer import PrioritizedTask, prioritize, prioritize_open_ta
 from calendar_api import client as cal_client
 from db import client as db
 from gmail_api.client import PendingThread, list_pending_for_reply
-from llm.email_filter import filter_actionable
+from llm.email_filter import filter_actionable as filter_emails
+from llm.slack_filter import filter_actionable as filter_slack
 from obsidian.parser import ExtractedTask, extract_tasks
 from obsidian.reader import list_new_or_modified_notes, project_from_path, read_note
+from slack_api.client import list_all_pending as list_slack_pending
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +47,8 @@ class BriefingResult:
     notes_skipped_age: int = 0
     emails_pending: int = 0       # threads heurísticos
     emails_actionable: int = 0    # los que el LLM marcó como accionables
+    slack_pending: int = 0        # mensajes heurísticos (DMs + menciones)
+    slack_actionable: int = 0     # los que el LLM marcó como accionables
 
 
 def _tz() -> ZoneInfo:
@@ -172,7 +176,7 @@ def _extract_from_gmail(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
         return [], 0, 0
 
     try:
-        actionable = filter_actionable(threads)
+        actionable = filter_emails(threads)
     except Exception:
         log.exception("Error filtrando correos")
         return [], len(threads), 0
@@ -196,6 +200,49 @@ def _extract_from_gmail(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
             project="Correos",
         ))
     return tasks, len(threads), len(actionable)
+
+
+def _extract_from_slack(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
+    """Lista mensajes Slack pendientes (DMs + menciones), filtra con LLM."""
+    try:
+        messages = list_slack_pending(days=days)
+    except RuntimeError:
+        log.info("Slack no está configurado (sin SLACK_USER_TOKEN); skip")
+        return [], 0, 0
+    except Exception:
+        log.exception("Error listando mensajes Slack")
+        return [], 0, 0
+
+    if not messages:
+        return [], 0, 0
+
+    try:
+        actionable = filter_slack(messages)
+    except Exception:
+        log.exception("Error filtrando Slack")
+        return [], len(messages), 0
+
+    tasks: List[ExtractedTask] = []
+    for m in actionable:
+        title = f"Responder en Slack: {m.text[:80]}".strip()
+        context = (
+            f"Canal: {m.channel_name}\n"
+            f"De: {m.author_name}\n"
+            f"Acción sugerida: {m.suggested_action}\n"
+            f"Por qué: {m.reason}"
+        )
+        # source_note único: channel_id + ts (uno por mensaje)
+        source_note = f"{m.channel_id}::{m.permalink}" if m.permalink else m.channel_id
+        tasks.append(ExtractedTask(
+            title=title,
+            context=context,
+            estimated_minutes=None,
+            deadline_hint=None,
+            source_note=source_note,
+            source="slack",
+            project="Slack",
+        ))
+    return tasks, len(messages), len(actionable)
 
 
 def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
@@ -229,6 +276,12 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         new_prioritized = prioritize(gmail_tasks, today_iso=briefing_date.isoformat())
         _persist_prioritized(new_prioritized, briefing_date, source="gmail")
 
+    # 1c. Ingesta Slack: DMs + menciones filtrados por LLM (últimos 7 días).
+    slack_tasks, slack_pending, slack_actionable = _extract_from_slack(days=7)
+    if slack_tasks:
+        new_prioritized = prioritize(slack_tasks, today_iso=briefing_date.isoformat())
+        _persist_prioritized(new_prioritized, briefing_date, source="slack")
+
     # 2. Repriorización del estado completo
     try:
         open_tasks = db.list_open_tasks(user_id)
@@ -256,4 +309,6 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         notes_skipped_age=skipped,
         emails_pending=emails_pending,
         emails_actionable=emails_actionable,
+        slack_pending=slack_pending,
+        slack_actionable=slack_actionable,
     )

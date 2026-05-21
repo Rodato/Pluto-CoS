@@ -80,6 +80,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/revisar — chequear invitaciones ya\n"
         "/briefing — generar briefing matutino on-demand\n"
         "/correos — correos pendientes de respuesta\n"
+        "/slack — mensajes Slack pendientes\n"
         "/autorizar — conectar Google Calendar\n\n"
         "También podés escribirme en lenguaje natural ('¿qué tengo el viernes?', "
         "'¿cuándo tengo libre esta semana?')."
@@ -243,6 +244,63 @@ async def cmd_correos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@authorized_only
+async def cmd_slack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista mensajes de Slack que requieren tu respuesta — DMs + menciones + LLM filter."""
+    from llm.slack_filter import filter_actionable
+    from slack_api.client import list_all_pending
+
+    await update.message.chat.send_action("typing")
+    try:
+        messages = await asyncio.to_thread(list_all_pending, 7)
+    except RuntimeError as exc:
+        await update.message.reply_text(f"⚠️ Slack no está configurado: {exc}")
+        return
+    except Exception as exc:
+        log.exception("Error listando Slack")
+        await update.message.reply_text(f"⚠️ Error consultando Slack: {exc}")
+        return
+
+    if not messages:
+        await update.message.reply_text("📭 Slack tranquilo. Sin DMs ni menciones pendientes en 7 días.")
+        return
+
+    actionable = await asyncio.to_thread(filter_actionable, messages)
+    if not actionable:
+        await update.message.reply_text(
+            f"📭 De {len(messages)} mensajes pendientes en Slack, ninguno parece pedir respuesta."
+        )
+        return
+
+    lines = [
+        f"💬 <b>Slack — mensajes que esperan respuesta</b> "
+        f"({len(actionable)} de {len(messages)} pendientes)"
+    ]
+    for m in actionable[:15]:
+        author = html.escape(m.author_name)
+        channel = html.escape(m.channel_name)
+        text_preview = html.escape(m.text[:140])
+        link_label = "abrir en Slack"
+        link_html = (
+            f' <a href="{m.permalink}">[{link_label}]</a>'
+            if m.permalink else ""
+        )
+        lines.append(
+            f"\n• <b>{author}</b> en <i>{channel}</i>{link_html}\n"
+            f"  → {html.escape(m.suggested_action)}\n"
+            f"  <i>{html.escape(m.reason)}</i>\n"
+            f"  <code>{text_preview}</code>"
+        )
+    if len(actionable) > 15:
+        lines.append(f"\n<i>+ {len(actionable) - 15} más en Slack</i>")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+
+
 # ============================================================
 # Callback RSVP
 # ============================================================
@@ -311,5 +369,6 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(CommandHandler("correos", cmd_correos))
+    app.add_handler(CommandHandler("slack", cmd_slack))
     app.add_handler(CallbackQueryHandler(on_rsvp, pattern=r"^rsvp:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
