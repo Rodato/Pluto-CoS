@@ -93,6 +93,10 @@ python3 -m venv .venv
 - Cada handler de Telegram debe rechazar mensajes cuyo `update.effective_chat.id` no sea `TELEGRAM_CHAT_ID`.
 - No diseñar para multi-tenant: el schema lo soporta (`user_id`) pero el bot vive con un solo usuario.
 
+### Telegram — límites duros que ya nos golpearon
+- **4096 chars por mensaje.** El briefing trocea por proyecto vía `render_telegram` que devuelve `List[str]`. Cualquier render que pueda crecer (Gmail/Slack/pendientes a futuro) debe chequear largo.
+- **64 bytes en `callback_data`.** Los `event_id` de invitaciones recurrentes de Google (`base_YYYYMMDDTHHMMSSZ`) los superan. Patrón actual: callback_data corto (`rsvp:accepted`) + resolver el contexto en DB usando `query.message.message_id` (ver `db.get_event_id_by_message_id`).
+
 ## Pipeline del chequeo (cron v1)
 ```
 Cada 15 min
@@ -104,13 +108,17 @@ Cada 15 min
   └─ (callback inline RSVP → events.patch + DB update rsvp_status)
 ```
 
-## Comandos del bot (v1)
+## Comandos del bot
 | Comando | Qué hace |
 |---|---|
 | `/hoy` | Eventos de hoy |
 | `/semana` | Agenda de la semana |
 | `/libre <fecha hora>` | "/libre martes 3pm" → ¿hay algo a esa hora? |
 | `/revisar` | Fuerza chequeo manual de invitaciones (sin esperar al cron) |
+| `/briefing` | Genera el briefing matutino on-demand (sin esperar al cron de las 8 AM) |
+| `/correos` | Lista correos pendientes de respuesta (Gmail + filtro LLM) |
+| `/slack` | DMs y menciones de Slack que esperan respuesta |
+| `/pendientes` | Tareas abiertas (`tasks` Neon) con botones ✅ para marcar hecho |
 | `/autorizar` | Devuelve instrucciones para correr `oauth_local.py` (la auth es local, no se hace por Telegram) |
 
 Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre la agenda (tool calling sobre wrappers de calendar).
