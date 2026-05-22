@@ -110,12 +110,15 @@ async def run_daily_briefing(tg_app: Application) -> None:
     except Exception:
         log.exception("Error escribiendo briefing al vault (sigo con Telegram)")
 
-    try:
-        await tg_app.bot.send_message(
-            chat_id=int(chat_id_env),
-            text=render_telegram(briefing),
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    except Exception:
-        log.exception("Error enviando briefing por Telegram")
+    chunks = render_telegram(briefing)
+    for chunk in chunks:
+        try:
+            await tg_app.bot.send_message(
+                chat_id=int(chat_id_env),
+                text=chunk,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("Error enviando chunk del briefing por Telegram")
+            return

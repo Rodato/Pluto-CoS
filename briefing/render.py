@@ -19,6 +19,9 @@ PRIORITY_EMOJI = {"P0": "🔴", "P1": "🟠", "P2": "🟡", "P3": "🟢"}
 # Telegram: máximo de tareas mostradas por proyecto.
 TELEGRAM_MAX_PER_PROJECT = 5
 
+# Telegram limita los mensajes a 4096 chars. Dejamos margen para HTML.
+TELEGRAM_CHUNK_LIMIT = 3800
+
 
 def _group_by_project(items: List[PrioritizedTask]) -> Dict[str, List[PrioritizedTask]]:
     grouped: Dict[str, List[PrioritizedTask]] = {}
@@ -39,28 +42,54 @@ def _project_sort_key(proj_name: str, items: List[PrioritizedTask]) -> tuple:
     return (0 if has_p0 else 1 if has_p1 else 2, -len(items), proj_name.lower())
 
 
-def render_telegram(briefing: BriefingResult, max_per_project: int = TELEGRAM_MAX_PER_PROJECT) -> str:
-    """HTML para Telegram. Agrupado por proyecto, cap por proyecto."""
-    parts: List[str] = []
-    parts.append(f"☀️ <b>Briefing — {briefing.briefing_date.isoformat()}</b>")
+def _pack_chunks(blocks: List[str], limit: int = TELEGRAM_CHUNK_LIMIT) -> List[str]:
+    """Acumula bloques en chunks <= limit. Cada bloque debe ser HTML autocontenido."""
+    chunks: List[str] = []
+    current = ""
+    for block in blocks:
+        sep = "\n" if current else ""
+        if current and len(current) + len(sep) + len(block) > limit:
+            chunks.append(current)
+            current = block
+        else:
+            current += sep + block
+    if current:
+        chunks.append(current)
+    return chunks
 
+
+def render_telegram(
+    briefing: BriefingResult,
+    max_per_project: int = TELEGRAM_MAX_PER_PROJECT,
+) -> List[str]:
+    """HTML para Telegram. Devuelve N chunks <= TELEGRAM_CHUNK_LIMIT chars.
+
+    Cada chunk es HTML autocontenido (todos los tags abren y cierran dentro).
+    El primer chunk lleva el header del briefing y la agenda; los siguientes
+    llevan un sub-header "(parte k/N)". El footer va al final del último.
+    """
+    blocks: List[str] = []
+
+    header_block = f"☀️ <b>Briefing — {briefing.briefing_date.isoformat()}</b>"
     if briefing.today_events:
-        parts.append("\n📅 <b>Tu agenda hoy</b>")
+        agenda_lines = ["📅 <b>Tu agenda hoy</b>"]
         for ev in briefing.today_events:
             start = _fmt_dt(ev.get("start", {}))
             title = ev.get("summary") or "(sin título)"
-            parts.append(f"• <b>{html.escape(start)}</b> — {html.escape(title)}")
+            agenda_lines.append(f"• <b>{html.escape(start)}</b> — {html.escape(title)}")
+        header_block += "\n\n" + "\n".join(agenda_lines)
     else:
-        parts.append("\n📅 Hoy no tenés nada agendado.")
+        header_block += "\n\n📅 Hoy no tenés nada agendado."
+    blocks.append(header_block)
 
     grouped = _group_by_project(briefing.prioritized)
     if not grouped:
-        parts.append(
-            f"\n📝 Sin tareas. "
+        blocks.append(
+            f"📝 Sin tareas. "
             f"({briefing.notes_processed} notas procesadas, "
             f"{briefing.notes_skipped_age} ignoradas por antigüedad)"
         )
-        return "\n".join(parts)
+        return _finalize_chunks(_pack_chunks(blocks))
 
     extra_count = 0
     projects_sorted = sorted(grouped.items(), key=lambda kv: _project_sort_key(kv[0], kv[1]))
@@ -68,31 +97,43 @@ def render_telegram(briefing: BriefingResult, max_per_project: int = TELEGRAM_MA
         total = len(items)
         shown = items[:max_per_project]
         extra_count += max(0, total - max_per_project)
-        header = f"\n📁 <b>{html.escape(proj)}</b>"
+        proj_lines = [f"📁 <b>{html.escape(proj)}</b>"]
         if total > max_per_project:
-            header += f" <i>(mostrando {len(shown)} de {total})</i>"
+            proj_lines[0] += f" <i>(mostrando {len(shown)} de {total})</i>"
         else:
-            header += f" <i>({total})</i>"
-        parts.append(header)
+            proj_lines[0] += f" <i>({total})</i>"
         for it in shown:
             emoji = PRIORITY_EMOJI.get(it.priority, "•")
             line = f"{emoji} <b>{html.escape(it.title)}</b>"
             if it.rationale:
                 line += f"\n  <i>{html.escape(it.rationale)}</i>"
-            parts.append(line)
+            proj_lines.append(line)
+        blocks.append("\n".join(proj_lines))
 
     footer = (
-        f"\n<i>{briefing.notes_processed} notas procesadas · "
+        f"<i>{briefing.notes_processed} notas procesadas · "
         f"{briefing.notes_skipped_age} ignoradas por antigüedad</i>"
     )
     if extra_count:
         footer = (
-            f"\n📂 <i>{extra_count} tareas adicionales en "
-            f"<code>Briefings/{briefing.briefing_date.isoformat()}.md</code></i>"
+            f"📂 <i>{extra_count} tareas adicionales en "
+            f"<code>Briefings/{briefing.briefing_date.isoformat()}.md</code></i>\n"
             + footer
         )
-    parts.append(footer)
-    return "\n".join(parts)
+    blocks.append(footer)
+
+    return _finalize_chunks(_pack_chunks(blocks))
+
+
+def _finalize_chunks(chunks: List[str]) -> List[str]:
+    """Agrega marker '(parte k/N)' a chunks 2..N."""
+    if len(chunks) <= 1:
+        return chunks
+    total = len(chunks)
+    return [
+        chunks[0],
+        *(f"<i>(parte {i + 1}/{total})</i>\n{c}" for i, c in enumerate(chunks[1:], start=1)),
+    ]
 
 
 def render_markdown(briefing: BriefingResult) -> str:

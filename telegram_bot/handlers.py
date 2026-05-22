@@ -189,11 +189,12 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         log.exception("Error escribiendo briefing al vault (sigo con Telegram)")
 
-    await update.message.reply_text(
-        render_telegram(briefing),
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-    )
+    for chunk in render_telegram(briefing):
+        await update.message.reply_text(
+            chunk,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
 
 
 @authorized_only
