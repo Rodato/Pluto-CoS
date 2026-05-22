@@ -9,6 +9,11 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover
+    from backports.zoneinfo import ZoneInfo  # type: ignore
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -58,7 +63,15 @@ async def check_new_invitations(tg_app: Application) -> int:
     """
     user_id = os.environ.get("USER_ID", "daniel")
     now = datetime.now(timezone.utc)
-    horizon = now + timedelta(days=30)
+
+    # Horizonte = final de la semana en curso (próximo lunes 00:00 hora local).
+    tz = ZoneInfo(os.environ.get("TZ_NAME", "America/Bogota"))
+    local_now = now.astimezone(tz)
+    days_until_next_monday = (7 - local_now.weekday()) % 7 or 7
+    end_of_week_local = (local_now + timedelta(days=days_until_next_monday)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    horizon = end_of_week_local.astimezone(timezone.utc)
 
     try:
         pending = cal_client.list_pending_invitations(now, horizon)
@@ -110,7 +123,7 @@ async def run_daily_briefing(tg_app: Application) -> None:
     except Exception:
         log.exception("Error escribiendo briefing al vault (sigo con Telegram)")
 
-    chunks = render_telegram(briefing)
+    chunks = await asyncio.to_thread(render_telegram, briefing)
     for chunk in chunks:
         try:
             await tg_app.bot.send_message(

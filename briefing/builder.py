@@ -59,14 +59,31 @@ def _user_id() -> str:
     return os.environ.get("USER_ID", "daniel")
 
 
+# Tipos de evento de Google que NO son reuniones reales (out-of-office, focus time, etc.).
+_NON_MEETING_EVENT_TYPES = {"outOfOffice", "focusTime", "workingLocation"}
+
+
+def _is_actionable_event(event: dict) -> bool:
+    """Filtra bloques personales / no-reunión: out-of-office, focus time, working
+    location y eventos marcados como 'libre' (transparency=transparent), como
+    típicamente son ALMUERZO o bloques de gimnasio.
+    """
+    if event.get("eventType") in _NON_MEETING_EVENT_TYPES:
+        return False
+    if event.get("transparency") == "transparent":
+        return False
+    return True
+
+
 def _today_events(today: datetime) -> List[dict]:
     start = today.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     try:
-        return cal_client.list_events(start, end)
+        events = cal_client.list_events(start, end)
     except Exception:
         log.exception("No se pudo leer Calendar para el briefing")
         return []
+    return [ev for ev in events if _is_actionable_event(ev)]
 
 
 def _window_start(today_local: date, tz) -> datetime:

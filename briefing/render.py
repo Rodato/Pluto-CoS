@@ -1,26 +1,97 @@
-"""Renderers para el briefing — Telegram (HTML) y Markdown (vault).
+"""Renderers para el briefing — Telegram (narrativa LLM) y Markdown (vault).
 
-Agrupación PRINCIPAL: por proyecto (carpeta Granola/<project>/).
-Dentro de cada proyecto: ordenado por prioridad (P0 → P3).
+- Telegram: `render_telegram` arma una narrativa conversacional con LLM
+  agrupada por urgencia (P0/P1/P2) y proyecto. Excluye P3 y "Varios".
+- Markdown: `render_markdown` mantiene el formato estructurado completo para
+  el archivo de archivo en el vault (incluyendo P3 y Varios).
 """
 
 from __future__ import annotations
 
 import html
+import json
+import logging
 from typing import Dict, List
 
 from briefing.builder import BriefingResult
 from briefing.prioritizer import PrioritizedTask
+from llm.planner import DEFAULT_MODEL, _client
 from telegram_bot.bot import _fmt_dt
+
+log = logging.getLogger(__name__)
 
 PRIORITY_ORDER = ("P0", "P1", "P2", "P3")
 PRIORITY_EMOJI = {"P0": "🔴", "P1": "🟠", "P2": "🟡", "P3": "🟢"}
 
-# Telegram: máximo de tareas mostradas por proyecto.
-TELEGRAM_MAX_PER_PROJECT = 5
-
 # Telegram limita los mensajes a 4096 chars. Dejamos margen para HTML.
 TELEGRAM_CHUNK_LIMIT = 3800
+
+# Proyectos que no aportan al briefing conversacional.
+_HIDDEN_PROJECTS = {"Varios", ""}
+
+_NARRATIVE_SYSTEM_PROMPT = """Sos el Chief-of-Staff de Daniel (CTO de Estudio Plural). Entregás el briefing matutino en formato conversacional, español rioplatense, cercano pero profesional. Hablás de vos.
+
+Estructura OBLIGATORIA del mensaje (HTML para Telegram, máximo 3500 chars TOTAL):
+
+☀️ <b>Buenos días, Daniel</b>
+1-2 oraciones con la agenda del día en prosa fluida (ej: "Hoy arrancás con X a las 8, después Y a las 2, y a las 5 cortás"). Omití bloques personales sin valor. Si no hay agenda, decilo en una línea.
+
+🔴 <b>Lo urgente hoy</b>
+Prosa por proyecto. Para cada proyecto con tareas P0: 1-2 oraciones que parafraseen las tareas y por qué bloquean. Mencioná el proyecto en <b>negrita</b>. NO listas con bullets, NO comillas, NO repitas títulos textuales.
+
+🟠 <b>Para atender pronto</b>
+Igual, pero con las P1. Más conciso (1 oración por proyecto bastante).
+
+🟡 <b>No lo perdás de vista</b>
+Pasada rápida con las P2: una oración corta por proyecto, solo lo que merece estar arriba del radar. Si hay muchas, agrupá.
+
+REGLAS:
+- HTML simple: solo <b> y <i>. NO uses markdown ni headers (#).
+- Si una sección no tiene tareas, omitirla COMPLETAMENTE (ni el header).
+- Tono cercano pero profesional. NO uses "che", "bro", "obvio", ni emojis sueltos en el cuerpo.
+- Sé selectivo: si hay 10 P1 en un proyecto, mencioná solo las 2-3 más importantes y agregá "y otras X más" si querés. NO exhaustivo.
+- NUNCA inventes tareas que no estén en el input.
+- NO firmes el mensaje ni cierres con despedida."""
+
+
+def _select_for_narrative(prioritized: List[PrioritizedTask]) -> List[PrioritizedTask]:
+    """Excluye P3 y proyecto Varios; ordena por priority y proyecto."""
+    priority_idx = {p: i for i, p in enumerate(PRIORITY_ORDER)}
+    keep = [
+        t for t in prioritized
+        if t.priority in ("P0", "P1", "P2")
+        and (t.project or "Varios") not in _HIDDEN_PROJECTS
+    ]
+    keep.sort(key=lambda t: (priority_idx.get(t.priority, 99), (t.project or "").lower()))
+    return keep
+
+
+def _build_narrative_payload(briefing: BriefingResult, tasks: List[PrioritizedTask]) -> dict:
+    """Payload compacto para el LLM — solo lo necesario para narrar."""
+    agenda = []
+    for ev in briefing.today_events:
+        agenda.append({
+            "hora": _fmt_dt(ev.get("start", {})),
+            "titulo": ev.get("summary") or "(sin título)",
+        })
+
+    by_priority: Dict[str, Dict[str, List[dict]]] = {"P0": {}, "P1": {}, "P2": {}}
+    for t in tasks:
+        proj = t.project or "Varios"
+        bucket = by_priority[t.priority].setdefault(proj, [])
+        bucket.append({
+            "titulo": t.title,
+            "por_que": t.rationale,
+        })
+
+    return {
+        "fecha": briefing.briefing_date.isoformat(),
+        "agenda": agenda,
+        "P0_urgente_hoy": by_priority["P0"],
+        "P1_atender_pronto": by_priority["P1"],
+        "P2_no_perder_de_vista": by_priority["P2"],
+    }
+
 
 
 def _group_by_project(items: List[PrioritizedTask]) -> Dict[str, List[PrioritizedTask]]:
@@ -58,71 +129,98 @@ def _pack_chunks(blocks: List[str], limit: int = TELEGRAM_CHUNK_LIMIT) -> List[s
     return chunks
 
 
-def render_telegram(
-    briefing: BriefingResult,
-    max_per_project: int = TELEGRAM_MAX_PER_PROJECT,
-) -> List[str]:
-    """HTML para Telegram. Devuelve N chunks <= TELEGRAM_CHUNK_LIMIT chars.
+def render_telegram(briefing: BriefingResult) -> List[str]:
+    """HTML conversacional para Telegram (narrado por LLM).
 
-    Cada chunk es HTML autocontenido (todos los tags abren y cierran dentro).
-    El primer chunk lleva el header del briefing y la agenda; los siguientes
-    llevan un sub-header "(parte k/N)". El footer va al final del último.
+    Devuelve N chunks <= TELEGRAM_CHUNK_LIMIT chars. Si el LLM falla, cae a un
+    render minimalista. Excluye P3 y proyecto "Varios"; el .md del vault sí
+    los incluye.
     """
-    blocks: List[str] = []
+    selected = _select_for_narrative(briefing.prioritized)
+    hidden_count = len(briefing.prioritized) - len(selected)
 
-    header_block = f"☀️ <b>Briefing — {briefing.briefing_date.isoformat()}</b>"
-    if briefing.today_events:
-        agenda_lines = ["📅 <b>Tu agenda hoy</b>"]
-        for ev in briefing.today_events:
-            start = _fmt_dt(ev.get("start", {}))
-            title = ev.get("summary") or "(sin título)"
-            agenda_lines.append(f"• <b>{html.escape(start)}</b> — {html.escape(title)}")
-        header_block += "\n\n" + "\n".join(agenda_lines)
-    else:
-        header_block += "\n\n📅 Hoy no tenés nada agendado."
-    blocks.append(header_block)
+    if not selected and not briefing.today_events:
+        body = "☀️ <b>Buenos días, Daniel</b>\nHoy no tenés agenda ni tareas pendientes. Aprovechá."
+        return _finalize_chunks(_pack_chunks([body, _footer(briefing, hidden_count)]))
 
-    grouped = _group_by_project(briefing.prioritized)
-    if not grouped:
-        blocks.append(
-            f"📝 Sin tareas. "
-            f"({briefing.notes_processed} notas procesadas, "
-            f"{briefing.notes_skipped_age} ignoradas por antigüedad)"
+    narrative = _generate_narrative(briefing, selected)
+    blocks = [narrative, _footer(briefing, hidden_count)]
+    return _finalize_chunks(_pack_chunks(blocks))
+
+
+def _generate_narrative(briefing: BriefingResult, selected: List[PrioritizedTask]) -> str:
+    """Llama al LLM con el payload estructurado. Si falla, fallback minimalista."""
+    payload = _build_narrative_payload(briefing, selected)
+    user_content = (
+        "Generá el briefing matutino conversacional a partir de este JSON:\n\n"
+        + json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+    try:
+        resp = _client.chat.completions.create(
+            model=DEFAULT_MODEL,
+            messages=[
+                {"role": "system", "content": _NARRATIVE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
         )
-        return _finalize_chunks(_pack_chunks(blocks))
+        text = (resp.choices[0].message.content or "").strip()
+        if text:
+            return text
+    except Exception:
+        log.exception("LLM falló generando narrativa del briefing — uso fallback")
 
-    extra_count = 0
-    projects_sorted = sorted(grouped.items(), key=lambda kv: _project_sort_key(kv[0], kv[1]))
-    for proj, items in projects_sorted:
-        total = len(items)
-        shown = items[:max_per_project]
-        extra_count += max(0, total - max_per_project)
-        proj_lines = [f"📁 <b>{html.escape(proj)}</b>"]
-        if total > max_per_project:
-            proj_lines[0] += f" <i>(mostrando {len(shown)} de {total})</i>"
-        else:
-            proj_lines[0] += f" <i>({total})</i>"
-        for it in shown:
-            emoji = PRIORITY_EMOJI.get(it.priority, "•")
-            line = f"{emoji} <b>{html.escape(it.title)}</b>"
-            if it.rationale:
-                line += f"\n  <i>{html.escape(it.rationale)}</i>"
-            proj_lines.append(line)
-        blocks.append("\n".join(proj_lines))
+    return _fallback_narrative(briefing, selected)
 
-    footer = (
+
+def _fallback_narrative(briefing: BriefingResult, selected: List[PrioritizedTask]) -> str:
+    """Render minimalista si el LLM falla: lista por urgencia + proyecto."""
+    parts = [f"☀️ <b>Buenos días, Daniel</b> — {briefing.briefing_date.isoformat()}"]
+    if briefing.today_events:
+        agenda = ", ".join(
+            f"{_fmt_dt(ev.get('start', {}))} {ev.get('summary') or '(sin título)'}"
+            for ev in briefing.today_events
+        )
+        parts.append(f"<i>Agenda:</i> {html.escape(agenda)}")
+
+    headers = {
+        "P0": "🔴 <b>Lo urgente hoy</b>",
+        "P1": "🟠 <b>Para atender pronto</b>",
+        "P2": "🟡 <b>No lo perdás de vista</b>",
+    }
+    by_pri: Dict[str, List[PrioritizedTask]] = {"P0": [], "P1": [], "P2": []}
+    for t in selected:
+        by_pri[t.priority].append(t)
+
+    for pri in ("P0", "P1", "P2"):
+        items = by_pri[pri]
+        if not items:
+            continue
+        parts.append("")
+        parts.append(headers[pri])
+        by_proj: Dict[str, List[PrioritizedTask]] = {}
+        for t in items:
+            by_proj.setdefault(t.project or "Varios", []).append(t)
+        for proj, lst in by_proj.items():
+            titles = "; ".join(html.escape(t.title) for t in lst[:3])
+            extra = len(lst) - 3
+            tail = f" (+{extra} más)" if extra > 0 else ""
+            parts.append(f"<b>{html.escape(proj)}:</b> {titles}{tail}")
+    return "\n".join(parts)
+
+
+def _footer(briefing: BriefingResult, hidden_count: int) -> str:
+    pieces = []
+    if hidden_count > 0:
+        pieces.append(
+            f"📂 <i>{hidden_count} tareas menores en "
+            f"<code>Briefings/{briefing.briefing_date.isoformat()}.md</code></i>"
+        )
+    pieces.append(
         f"<i>{briefing.notes_processed} notas procesadas · "
         f"{briefing.notes_skipped_age} ignoradas por antigüedad</i>"
     )
-    if extra_count:
-        footer = (
-            f"📂 <i>{extra_count} tareas adicionales en "
-            f"<code>Briefings/{briefing.briefing_date.isoformat()}.md</code></i>\n"
-            + footer
-        )
-    blocks.append(footer)
-
-    return _finalize_chunks(_pack_chunks(blocks))
+    return "\n".join(pieces)
 
 
 def _finalize_chunks(chunks: List[str]) -> List[str]:

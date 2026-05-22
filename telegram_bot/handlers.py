@@ -189,7 +189,8 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         log.exception("Error escribiendo briefing al vault (sigo con Telegram)")
 
-    for chunk in render_telegram(briefing):
+    chunks = await asyncio.to_thread(render_telegram, briefing)
+    for chunk in chunks:
         await update.message.reply_text(
             chunk,
             parse_mode=ParseMode.HTML,
