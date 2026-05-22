@@ -63,6 +63,22 @@ def mark_invitation_seen(
         )
 
 
+def get_event_id_by_message_id(telegram_message_id: int) -> Optional[str]:
+    """Resuelve el event_id de Google Calendar desde el message_id de Telegram.
+
+    Usado por el callback RSVP: el callback_data no puede llevar el event_id
+    (excede el límite de 64 bytes en invitaciones recurrentes), así que
+    lo recuperamos de la DB.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            "SELECT event_id FROM seen_invitations WHERE telegram_message_id = %s",
+            (telegram_message_id,),
+        )
+        row = cur.fetchone()
+        return row["event_id"] if row else None
+
+
 def set_invitation_rsvp(event_id: str, rsvp_status: str) -> None:
     """Registra la respuesta RSVP del usuario (accepted/declined/tentative)."""
     with get_cursor() as cur:

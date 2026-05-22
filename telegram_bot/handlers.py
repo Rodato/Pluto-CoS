@@ -433,8 +433,16 @@ async def on_rsvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     try:
-        _, response, event_id = query.data.split(":", 2)
+        _, response = query.data.split(":", 1)
     except ValueError:
+        return
+
+    event_id = await asyncio.to_thread(db.get_event_id_by_message_id, query.message.message_id)
+    if not event_id:
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text(
+            "⚠️ No encontré esta invitación en la base. Probablemente es vieja — respondé desde Google Calendar."
+        )
         return
 
     try:

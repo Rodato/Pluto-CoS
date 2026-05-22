@@ -84,11 +84,14 @@ def format_invitation(event: dict) -> str:
     return "\n".join(lines)
 
 
-def rsvp_keyboard(event_id: str) -> InlineKeyboardMarkup:
+def rsvp_keyboard() -> InlineKeyboardMarkup:
+    # callback_data corto (Telegram limita a 64 bytes). El event_id no entra:
+    # event_ids de instancias recurrentes superan el límite. El handler resuelve
+    # el event_id desde DB usando el message_id del callback.
     return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Aceptar", callback_data=f"rsvp:accepted:{event_id}"),
-        InlineKeyboardButton("❓ Tentativo", callback_data=f"rsvp:tentative:{event_id}"),
-        InlineKeyboardButton("❌ Rechazar", callback_data=f"rsvp:declined:{event_id}"),
+        InlineKeyboardButton("✅ Aceptar", callback_data="rsvp:accepted"),
+        InlineKeyboardButton("❓ Tentativo", callback_data="rsvp:tentative"),
+        InlineKeyboardButton("❌ Rechazar", callback_data="rsvp:declined"),
     ]])
 
 
@@ -99,7 +102,7 @@ async def send_invitation(app: Application, event: dict) -> Optional[int]:
         chat_id=chat_id,
         text=format_invitation(event),
         parse_mode=ParseMode.HTML,
-        reply_markup=rsvp_keyboard(event["id"]),
+        reply_markup=rsvp_keyboard(),
         disable_web_page_preview=True,
     )
     return msg.message_id
