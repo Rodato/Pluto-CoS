@@ -37,24 +37,30 @@ class AwaitingItem:
     waiting_for: str         # qué espera Daniel del otro lado
 
 
-_SYSTEM_PROMPT = """Sos el Chief-of-Staff de Daniel (CTO de Estudio Plural). Recibís una lista de mensajes que DANIEL envió (correos + Slack DMs/grupos) y a los cuales NO le respondieron todavía. Tu trabajo es separar lo que realmente está esperando respuesta de lo que NO.
+_SYSTEM_PROMPT = """Sos el Chief-of-Staff de Daniel (CTO de Estudio Plural). Recibís una lista de mensajes que DANIEL envió (correos + Slack DMs/grupos + canales públicos/privados) y a los cuales NO le respondieron todavía. Tu trabajo es separar lo que realmente está esperando respuesta de lo que NO.
+
+⚠️ ATENCIÓN ESPECIAL A CANALES: en canales (channel_type=channel) la mayoría de los mensajes son anuncios, status updates, comentarios casuales o info compartida — NO esperan respuesta de nadie. Sé MUY conservador con esos. Solo extrae si el mensaje es claramente una pregunta abierta o un pedido explícito al canal.
 
 ❌ NO espera respuesta (descartá):
-- Confirmaciones / ack: "ok", "perfecto", "dale", "listo", "gracias", "recibido"
-- Anuncios sin pregunta: "ya está pusheado", "te dejo el link", "agendado"
-- Cortesía / cierre: "nos vemos", "buen finde", "saludos"
-- Compartir info sin pedir nada: forward de un link, paste de un documento
+- Confirmaciones / ack: "ok", "perfecto", "dale", "listo", "gracias", "recibido", "👍"
+- Anuncios / status: "ya está pusheado", "termino esto y sigo", "merged", "deployando", "subiendo"
+- Updates de progreso sin pregunta: "voy por la mitad", "el cliente confirmó", "agendado para mañana"
+- Cortesía / cierre: "nos vemos", "buen finde", "saludos", "lo veo mañana"
+- Compartir info sin pedir nada: forward de un link, FYI, paste de un documento, "les dejo esto por si sirve"
+- Comentarios en canal a un mensaje de otro (sin pregunta nueva)
 - Cuando Daniel cerró un thread con un "gracias" final que ya no requiere réplica
+- Heads-up / notificaciones generales al canal
 
 ✅ SÍ espera respuesta (incluí):
-- Daniel hizo una pregunta directa al otro lado
-- Daniel pidió aprobación, revisión, confirmación, decisión
+- Daniel hizo una pregunta directa ("¿alguien sabe...", "¿puede alguien...", "¿cómo lo hacemos...")
+- Daniel pidió aprobación, revisión, confirmación, decisión a alguien específico
 - Daniel propuso algo y necesita feedback / sí/no
 - Daniel solicitó un dato, archivo, contacto, acceso
 - Daniel está esperando que el otro le mande X
 - Follow-ups donde se ve que el otro debía haberle respondido
+- Pedidos explícitos al canal ("necesito que alguien me ayude con X antes de Y")
 
-Recibís items con: id, kind (gmail/slack), to (destinatarios), snippet (resumen).
+Recibís items con: id, kind (gmail/slack), channel_type (dm/group_dm/channel), to (destinatarios o nombre de canal), snippet.
 
 Devolvé JSON estricto con SOLO los que SÍ esperan respuesta:
 {
@@ -67,7 +73,7 @@ Devolvé JSON estricto con SOLO los que SÍ esperan respuesta:
   ]
 }
 
-Si ninguno espera respuesta, devolvé {"items": []}. Respondé en español rioplatense. Sé conservador — si dudás, descartá."""
+Si ninguno espera respuesta, devolvé {"items": []}. Respondé en español rioplatense. Ante la duda, descartá — sobre todo con mensajes en canales."""
 
 
 def filter_awaiting_reply(
@@ -93,6 +99,7 @@ def filter_awaiting_reply(
         items_for_llm.append({
             "id": offset + j,
             "kind": "slack",
+            "channel_type": m.source_type,  # dm | group_dm | channel
             "to": ", ".join(m.recipients[:4]),
             "channel": m.channel_name,
             "sent_at": m.sent_at.isoformat(),

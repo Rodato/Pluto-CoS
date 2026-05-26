@@ -38,10 +38,10 @@ class PendingSlackMessage:
 @dataclass
 class OutboundSlackMessage:
     """Mensaje que envió Daniel y aún no le respondieron."""
-    source_type: str            # "dm" | "group_dm"
+    source_type: str            # "dm" | "group_dm" | "channel"
     channel_id: str
-    channel_name: str           # "DM con X" o "Grupo con X, Y, Z"
-    recipients: List[str]       # display_names del/los destinatario(s)
+    channel_name: str           # "DM con X" / "Grupo con X, Y" / "#nombre-canal"
+    recipients: List[str]       # display_names (DMs) o ["#canal"] para canales
     text: str
     ts: str
     sent_at: datetime
@@ -238,16 +238,21 @@ def list_unread_mentions(days: int = 7, max_results: int = 30) -> List[PendingSl
 def list_outbound_awaiting(
     days: int = 7,
     min_age_hours: int = 6,
-    max_channels: int = 50,
+    max_channels: int = 150,
 ) -> List[OutboundSlackMessage]:
-    """DMs y group DMs donde el último mensaje es de Daniel y todavía no respondieron.
+    """Mensajes que Daniel envió en DMs, group DMs y canales (públicos +
+    privados) cuyo último mensaje en el canal sigue siendo de él.
 
-    - DMs (im): 1:1 con otra persona.
-    - Group DMs (mpim): multi-persona (no public/private channels, son ruidosos).
-
-    Filtros:
-    - Último mensaje del canal es de Daniel.
+    Filtros baratos en esta capa:
+    - Último mensaje del canal es de Daniel (con `users.conversations` +
+      `conversations.history` 1).
+    - `reply_count == 0`: si ya hay réplicas en thread, la conversación
+      siguió por ahí → no es outbound pendiente.
     - Enviado entre `min_age_hours` y `days` atrás.
+
+    NO filtra "ruido vs solicitud" — eso lo hace después el LLM
+    (llm/outbound_filter), porque en canales abundan los mensajes de
+    status/anuncio que parecen tareas pero no esperan respuesta.
     """
     cli = _client()
     me = _my_user_id()
@@ -256,15 +261,25 @@ def list_outbound_awaiting(
     cutoff_recent = (now - timedelta(hours=min_age_hours)).timestamp()
 
     try:
-        resp = cli.conversations_list(types="im,mpim", limit=200, exclude_archived=True)
+        resp = cli.conversations_list(
+            types="im,mpim,public_channel,private_channel",
+            limit=200,
+            exclude_archived=True,
+        )
     except SlackApiError:
-        log.exception("Slack conversations.list (im,mpim) falló")
+        log.exception("Slack conversations.list falló")
         return []
 
     channels = resp.get("channels", []) or []
+    # Para canales, priorizamos los que Daniel es miembro (xoxp ya filtra
+    # esto en `im`/`mpim`; para canales hay que chequear `is_member`).
+    relevant = [
+        ch for ch in channels
+        if ch.get("is_im") or ch.get("is_mpim") or ch.get("is_member")
+    ]
     result: List[OutboundSlackMessage] = []
 
-    for ch in channels[:max_channels]:
+    for ch in relevant[:max_channels]:
         ch_id = ch.get("id")
         if not ch_id:
             continue
@@ -286,11 +301,13 @@ def list_outbound_awaiting(
         if ts_float < cutoff_old:
             continue
         if ts_float > cutoff_recent:
-            # Demasiado reciente, todavía no espero respuesta.
             continue
         if last.get("user") != me:
             continue
         if _is_skippable_message(last):
+            continue
+        # Si ya hubo réplicas en thread, la conversación siguió por ahí.
+        if int(last.get("reply_count", 0) or 0) > 0:
             continue
 
         text = (last.get("text") or "").strip()
@@ -304,8 +321,7 @@ def list_outbound_awaiting(
             channel_name = f"DM con {other_name}"
             recipients = [other_name]
             source_type = "dm"
-        else:
-            # mpim — fetch miembros
+        elif ch.get("is_mpim"):
             try:
                 mem_resp = cli.conversations_members(channel=ch_id, limit=20)
                 member_ids = [u for u in (mem_resp.get("members") or []) if u != me]
@@ -316,6 +332,11 @@ def list_outbound_awaiting(
             tail = f" (+{extra})" if extra > 0 else ""
             channel_name = f"Grupo con {', '.join(recipients)}{tail}"
             source_type = "group_dm"
+        else:
+            ch_name = ch.get("name") or ch.get("name_normalized") or ch_id
+            channel_name = f"#{ch_name}"
+            recipients = [channel_name]
+            source_type = "channel"
 
         ts = last.get("ts") or ""
         result.append(OutboundSlackMessage(
