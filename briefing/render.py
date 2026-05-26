@@ -51,6 +51,7 @@ REGLAS:
 - Tono cercano pero profesional. NO uses "che", "bro", "obvio", ni emojis sueltos en el cuerpo.
 - Sé selectivo: si hay 10 P1 en un proyecto, mencioná solo las 2-3 más importantes y agregá "y otras X más" si querés. NO exhaustivo.
 - NUNCA inventes tareas que no estén en el input.
+- ⚠️ NUNCA inventes horas, fechas ni reuniones. Las ÚNICAS horas/eventos que podés mencionar son los que aparecen textualmente en `agenda` del JSON. Si una tarea dice "alineamiento", "reunión", "demo" o similar en su `por_que` o título, referite a la ACCIÓN (preparar insumos, cerrar protocolo, etc.) — NO digas "a las X PM" ni "la reunión de hoy" salvo que esa hora/evento esté en `agenda`.
 - NO firmes el mensaje ni cierres con despedida."""
 
 
@@ -163,6 +164,7 @@ def _generate_narrative(briefing: BriefingResult, selected: List[PrioritizedTask
                 {"role": "system", "content": _NARRATIVE_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
+            temperature=0.3,
         )
         text = (resp.choices[0].message.content or "").strip()
         if text:
