@@ -178,6 +178,20 @@ def list_open_tasks(user_id: str) -> List[dict]:
         return [dict(row) for row in cur.fetchall()]
 
 
+def list_open_tasks_by_source(user_id: str, source: str) -> List[dict]:
+    """Tasks abiertas filtradas por source (gmail/slack/granola). Incluye source_ref."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, title, source_ref
+            FROM tasks
+            WHERE user_id = %s AND status = 'open' AND source = %s
+            """,
+            (user_id, source),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
 def update_task_priority(task_id: str, priority: str) -> None:
     """Actualiza priority + updated_at de una tarea (usado en repriorización diaria)."""
     with get_cursor() as cur:

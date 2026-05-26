@@ -178,16 +178,57 @@ def _persist_prioritized(
             log.exception("Error persistiendo tarea %r", pt.title)
 
 
+def _close_resolved_tasks(user_id: str, source: str, active_keys: set[str]) -> int:
+    """Marca como done las tareas open de `source` cuyo source_ref ya no
+    coincide con ninguno de los `active_keys` actuales (prefix match en `::`).
+
+    Una task se considera resuelta si:
+    - Su thread/mensaje original ya no aparece en la fuente como pendiente
+      (Daniel respondió, o aged out fuera de la ventana de 7 días).
+
+    Devuelve cuántas tareas se cerraron.
+    """
+    try:
+        open_tasks = db.list_open_tasks_by_source(user_id, source)
+    except Exception:
+        log.exception("No pude listar open tasks de %s para auto-close", source)
+        return 0
+
+    closed = 0
+    for t in open_tasks:
+        sr = t.get("source_ref") or ""
+        # source_ref = f"{source_note}::{title_lower}". El identifier del
+        # thread/mensaje es todo lo previo al último ::, pero como source_note
+        # puede contener :: (caso Slack: channel::permalink), comparamos por
+        # prefix: la task se mantiene si algún active_key coincide con prefix.
+        is_active = any(
+            sr == k or sr.startswith(k + "::") for k in active_keys
+        )
+        if not is_active:
+            try:
+                db.update_task_status(t["id"], "done")
+                closed += 1
+            except Exception:
+                log.exception("No pude cerrar task %s", t.get("id"))
+    if closed:
+        log.info("Auto-cerradas %d tasks de %s (thread/msg ya resuelto)", closed, source)
+    return closed
+
+
 def _extract_from_gmail(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
     """Lista correos pendientes, filtra con LLM, devuelve como ExtractedTask.
 
-    Devuelve (tasks, pending_count, actionable_count).
+    Devuelve (tasks, pending_count, actionable_count). Como efecto secundario,
+    auto-cierra tasks de gmail cuyo thread ya no figura como pendiente.
     """
     try:
         threads = list_pending_for_reply(days=days)
     except Exception:
         log.exception("Error listando correos pendientes")
         return [], 0, 0
+
+    active_thread_ids = {t.thread_id for t in threads}
+    _close_resolved_tasks(_user_id(), "gmail", active_thread_ids)
 
     if not threads:
         return [], 0, 0
@@ -220,7 +261,11 @@ def _extract_from_gmail(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
 
 
 def _extract_from_slack(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
-    """Lista mensajes Slack pendientes (DMs + menciones), filtra con LLM."""
+    """Lista mensajes Slack pendientes (DMs + menciones), filtra con LLM.
+
+    Como efecto secundario, auto-cierra tasks de slack cuyo mensaje ya no
+    figura como pendiente (Daniel respondió o aged out).
+    """
     try:
         messages = list_slack_pending(days=days)
     except RuntimeError:
@@ -229,6 +274,12 @@ def _extract_from_slack(days: int = 7) -> tuple[List[ExtractedTask], int, int]:
     except Exception:
         log.exception("Error listando mensajes Slack")
         return [], 0, 0
+
+    active_keys = {
+        f"{m.channel_id}::{m.permalink}" if m.permalink else m.channel_id
+        for m in messages
+    }
+    _close_resolved_tasks(_user_id(), "slack", active_keys)
 
     if not messages:
         return [], 0, 0
