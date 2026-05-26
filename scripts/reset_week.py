@@ -1,7 +1,7 @@
 """One-shot: limpia tareas open y resetea processed_notes de la ventana actual.
 
 Uso:
-    railway run python3 scripts/reset_week.py [--dry-run]
+    .venv/bin/python3 scripts/reset_week.py [--dry-run]
 
 Qué hace:
 1. Marca como `dropped` todas las tareas open del usuario (no DELETE — preserva audit).
@@ -18,13 +18,21 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore
 
-from db.client import get_cursor
+from dotenv import load_dotenv
+
+# Permitir correr desde scripts/ — agregar root al path y cargar .env
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+load_dotenv(_ROOT / ".env")
+
+from db.client import get_cursor  # noqa: E402
 
 
 def _tz() -> ZoneInfo:
