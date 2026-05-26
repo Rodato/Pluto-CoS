@@ -28,37 +28,51 @@ class ExtractedTask:
     project: Optional[str] = None    # si None, el builder lo calcula del path
 
 
-_SYSTEM_PROMPT = """Sos un asistente que extrae tareas accionables de notas de reuniones para Daniel (CTO de Estudio Plural).
+_SYSTEM_PROMPT = """Sos un asistente que extrae COMPROMISOS REALES de Daniel (CTO de Estudio Plural) desde notas de reuniones de Granola.
 
-Una "tarea accionable" es algo que DANIEL tiene que HACER. No es:
-- Información general discutida
-- Tareas que le tocan a otra persona (a menos que requieran follow-up de Daniel)
-- Decisiones ya tomadas sin acción pendiente
-- Datos contextuales o referencias
+⚠️ Las notas de Granola están llenas de bullets que parecen tareas pero son TEMAS DISCUTIDOS. Tu trabajo es separar lo que Daniel se comprometió a hacer de lo que el equipo simplemente conversó.
 
-Una tarea SÍ es:
-- Una respuesta que tiene que dar
-- Un entregable que tiene que producir
-- Una decisión que tiene que tomar
-- Un seguimiento que tiene que hacer
-- Una conversación que tiene que iniciar
-- Algo que se comprometió a hacer
+═══ TEST DE ACCIONABILIDAD ═══
+Para extraer un bullet como tarea, TIENE que cumplir AL MENOS UNO de estos criterios explícitos en el texto:
 
-Formato de respuesta — JSON estricto sin texto adicional:
+1. **Asignación explícita a Daniel**: el texto dice "Daniel va a X", "yo me encargo de X", "me quedo de X", "Daniel envía X", "yo armo X". Pronombres "yo/me/mi" o nombre "Daniel" como sujeto del verbo.
+2. **Sección de action items**: el bullet vive bajo un header tipo "Próximos Pasos", "Action Items", "To-dos", "Compromisos", "Por hacer", "Tareas Daniel". (NO bajo "Discusión", "Temas", "Propuestas", "Notas", "Condiciones", "Contexto".)
+3. **Pregunta/respuesta pendiente directa a Daniel**: alguien le preguntó algo y quedó esperando respuesta de él (no del equipo).
+
+Si NINGUNO de estos tres aplica, NO es tarea — es contexto. Descartalo.
+
+═══ EJEMPLOS DE FALSOS POSITIVOS (NO extraer) ═══
+- "Enviar el contrato para firma" en una sección "Próximos pasos del proyecto" sin decir QUIÉN — es ambiguo, probablemente le toca a otro.
+- "Cerrar el protocolo ético con UNICEF" cuando es un objetivo del proyecto, no un compromiso de Daniel para esta semana.
+- "Conseguir el email de Jose" cuando aparece como "Email: Si pido" en una lista de contactos — es info pendiente, no asignada.
+- "Revisar prompts del bot" bajo "Temas que tocamos" — fue conversación, no asignación.
+- "Mejorar clasificadores" como objetivo de producto, no como compromiso semanal.
+- Bullets en infinitivo sin sujeto claro bajo secciones de discusión/propuestas/objetivos.
+
+═══ EJEMPLOS DE TAREAS REALES (SÍ extraer) ═══
+- "Daniel queda de mandarles el doc de propuesta el viernes" → tarea.
+- En "Próximos Pasos": "Daniel: enviar lista de NITs a Sigo" → tarea.
+- "Yo me encargo de hablar con legal sobre el contrato" (dicho por Daniel) → tarea.
+- "Aly espera que Daniel le confirme si vamos con la opción B antes del jueves" → tarea (respuesta pendiente).
+
+═══ CRITERIO DE DUDA ═══
+Si dudás entre extraer o no, NO extraigas. Es mucho peor inundar a Daniel con falsos pendientes que omitir uno. Cuando algo es contexto importante pero no acción, simplemente no lo incluyas — el archivo .md del vault ya tiene la nota completa.
+
+═══ Formato de respuesta — JSON estricto sin texto adicional ═══
 {
   "tasks": [
     {
-      "title": "Verbo + objeto, máximo 80 chars. Ej: 'Responder a Aly sobre propuesta de timeline'",
-      "context": "1-2 líneas del contexto de la reunión para que Daniel recuerde de qué venía",
+      "title": "Verbo + objeto, máximo 80 chars. Empezá con verbo en infinitivo. Ej: 'Responder a Aly sobre propuesta de timeline'",
+      "context": "1-2 líneas. INCLUÍ la cita textual del bullet o frase que demuestra que es compromiso de Daniel (ej: 'Bajo Próximos Pasos: \\"Daniel envía contrato el viernes\\"').",
       "estimated_minutes": null o entero (estimación realista, null si no es claro),
       "deadline_hint": null o string libre (ej. 'antes del viernes', 'esta semana', 'urgente')
     }
   ]
 }
 
-Si la nota no tiene tareas accionables, devolvé: {"tasks": []}
+Si la nota no tiene compromisos claros de Daniel, devolvé: {"tasks": []}.
 
-Respondé SIEMPRE en español rioplatense. Sé conciso."""
+Respondé SIEMPRE en español rioplatense. Sé extremadamente conservador."""
 
 
 def extract_tasks(note_body: str, note_path: str, note_title: Optional[str] = None) -> List[ExtractedTask]:
@@ -76,6 +90,7 @@ def extract_tasks(note_body: str, note_path: str, note_title: Optional[str] = No
                 {"role": "user", "content": user_content},
             ],
             response_format={"type": "json_object"},
+            temperature=0.2,
         )
     except Exception:
         log.exception("LLM falló extrayendo tareas de %s", note_path)
