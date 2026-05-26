@@ -260,17 +260,47 @@ def list_outbound_awaiting(
     cutoff_old = (now - timedelta(days=days)).timestamp()
     cutoff_recent = (now - timedelta(hours=min_age_hours)).timestamp()
 
-    try:
-        resp = cli.conversations_list(
-            types="im,mpim,public_channel,private_channel",
-            limit=200,
-            exclude_archived=True,
-        )
-    except SlackApiError:
-        log.exception("Slack conversations.list falló")
-        return []
+    # Probamos con todos los tipos; si al token le falta `groups:read`
+    # (canales privados), caemos a la combinación que sí tenga permiso.
+    # Slack pagina, así que iteramos cursores hasta agotar.
+    type_options = [
+        "im,mpim,public_channel,private_channel",
+        "im,mpim,public_channel",
+        "im,mpim",
+    ]
+    channels: List[dict] = []
+    chosen_types = None
+    for types_str in type_options:
+        try:
+            cursor = None
+            page_count = 0
+            while page_count < 10:  # safety cap
+                kwargs = {"types": types_str, "limit": 200, "exclude_archived": True}
+                if cursor:
+                    kwargs["cursor"] = cursor
+                resp = cli.conversations_list(**kwargs)
+                channels.extend(resp.get("channels", []) or [])
+                cursor = (resp.get("response_metadata") or {}).get("next_cursor") or None
+                page_count += 1
+                if not cursor:
+                    break
+            chosen_types = types_str
+            break
+        except SlackApiError as e:
+            err = e.response.get("error") if hasattr(e, "response") else str(e)
+            log.info("conversations.list types=%s falló (%s) — pruebo fallback", types_str, err)
+            channels = []
+            continue
 
-    channels = resp.get("channels", []) or []
+    if chosen_types is None:
+        log.exception("Slack conversations.list falló con todos los fallbacks")
+        return []
+    if chosen_types != type_options[0]:
+        log.warning(
+            "Slack: token no tiene scope para todos los tipos; uso fallback types=%s. "
+            "Para incluir canales privados sumá `groups:read` al token.",
+            chosen_types,
+        )
     # Para canales, priorizamos los que Daniel es miembro (xoxp ya filtra
     # esto en `im`/`mpim`; para canales hay que chequear `is_member`).
     relevant = [

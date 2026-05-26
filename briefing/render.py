@@ -47,6 +47,35 @@ def _fmt_task_with_channel(t) -> str:
     title = html.escape(t.title)
     return f"{title} ({label})" if label else title
 
+
+def _extract_identifier(source: Optional[str], context: Optional[str]) -> Optional[str]:
+    """Saca el remitente/canal del context guardado en DB.
+
+    Gmail context guardado por builder.py:
+        De: <remitente>
+        Acción sugerida: ...
+        Por qué: ...
+
+    Slack context:
+        Canal: <channel>
+        De: <author>
+        Acción sugerida: ...
+        Por qué: ...
+    """
+    if not source or not context:
+        return None
+    src = source.lower()
+    if src not in {"gmail", "slack"}:
+        return None
+    for line in context.splitlines():
+        line = line.strip()
+        if src == "gmail" and line.lower().startswith("de:"):
+            return line[3:].strip()[:80] or None
+        if src == "slack":
+            if line.lower().startswith("canal:"):
+                return line[6:].strip()[:80] or None
+    return None
+
 _NARRATIVE_SYSTEM_PROMPT = """Sos el Chief-of-Staff de Daniel (CTO de Estudio Plural). Entregás el briefing matutino en formato conversacional, español rioplatense, cercano pero profesional. Hablás de vos.
 
 Estructura OBLIGATORIA del mensaje (HTML para Telegram, máximo 3500 chars TOTAL):
@@ -63,11 +92,19 @@ Igual, pero con las P1. Más conciso (1 oración por proyecto bastante).
 🟡 <b>No lo perdás de vista</b>
 Pasada rápida con las P2: una oración corta por proyecto, solo lo que merece estar arriba del radar. Si hay muchas, agrupá.
 
-CITAR EL CANAL DE CADA TAREA: cada item en el JSON trae `canal` (correo / Slack / reunión / vacío). Cuando narres las tareas, mencioná el canal explícitamente en la prosa para que Daniel sepa dónde ir a buscar. Ejemplos:
-- "En <b>Apapáchar</b> tenés un correo pendiente de Rafael sobre datos unificados..."
-- "En <b>Lighting_AI</b>, por Slack te quedó pedir el contrato a legal..."
-- "En <b>Puddle</b>, de la reunión del lunes quedó preparar los insumos del benchmark..."
-Si el canal está vacío, no inventes; simplemente omití la referencia al canal y narrá la tarea. Si en un proyecto las tareas vienen de varios canales mixtos, agrupá por canal ("Por correo... y en Slack...").
+CITAR EL CANAL Y EL ORIGEN: cada item en el JSON trae `canal` (correo / Slack / reunión / vacío) y, cuando es correo o Slack, ALSO `de` con el remitente o canal de origen ("De: Rafael Phillips Alvarez", "Canal: #plural-dev", etc.). Cuando narres las tareas:
+1. SIEMPRE mencioná el canal en la prosa.
+2. Si hay `de`, mencionalo TAMBIÉN para que Daniel pueda identificar de qué se trata sin tener que adivinar. Usá el nombre/canal tal cual viene en `de`, no inventes.
+3. Si el canal está vacío, no inventes; omití la referencia al canal y narrá la tarea.
+4. Si en un proyecto las tareas vienen de canales mixtos, agrupá por canal ("Por correo... y en Slack...").
+
+Ejemplos correctos:
+- "En <b>Apapáchar</b>, por correo te quedó responderle a <b>Rafael Phillips</b> sobre datos unificados — necesita la confirmación para avanzar."
+- "En <b>Lighting_AI</b>, en Slack #plural-legal te pidieron el contrato firmado."
+- "En <b>Puddle</b>, de la reunión del lunes quedó preparar los insumos del benchmark."
+
+Ejemplos INCORRECTOS (no hacer):
+- "En Bootcamp Rio, por correo tenés que confirmar la cancelación" (¿de quién? ¿cuál correo?). MEJOR: "Por correo, <b>Eric Saiz</b> te escribió sobre Bootcamp Rio y necesita que confirmes la cancelación."
 
 📤 <b>Esperando respuesta</b>
 Solo si `esperando_respuesta` en el JSON tiene items. Por cada item, 1 línea de prosa: "<b>A &lt;persona&gt;</b> (correo|Slack): &lt;qué le pediste&gt; — &lt;hace cuánto&gt;". Agrupá por persona/canal si hay varios al mismo destinatario. NO mencionés el subject completo, parafraseá. Si hay >5 items, mostrá los 5 más viejos y agregá "+ N más esperando" al final.
@@ -107,15 +144,22 @@ def _build_narrative_payload(briefing: BriefingResult, tasks: List[PrioritizedTa
     for t in tasks:
         proj = t.project or "Varios"
         bucket = by_priority[t.priority].setdefault(proj, [])
-        bucket.append({
+        entry = {
             "titulo": t.title,
             "por_que": t.rationale,
             "canal": _channel_label(t.source),
-        })
+        }
+        # Para tasks que vinieron de Gmail/Slack, el `context` guardado en DB
+        # tiene "De: <remitente>" / "Canal: ..." — extraemos eso así el
+        # narrador puede identificar la tarea sin que el usuario adivine.
+        identifier = _extract_identifier(t.source, t.context)
+        if identifier:
+            entry["de"] = identifier
+        bucket.append(entry)
 
     awaiting = [
         {
-            "canal": a.kind,
+            "canal": _channel_label(a.kind),
             "a_quien": a.recipients_label,
             "esperando": a.waiting_for,
             "contexto": a.reason,
