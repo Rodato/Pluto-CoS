@@ -29,6 +29,17 @@ class PendingThread:
     is_to: bool                # True si el user está en To, False si solo Cc
 
 
+@dataclass
+class OutboundThread:
+    """Thread donde el último mensaje es de Daniel y aún no respondieron."""
+    thread_id: str
+    last_msg_id: str
+    subject: str
+    to_addrs: List[str]        # destinatarios del último mensaje (lowercase)
+    snippet: str               # snippet del mensaje que envió Daniel
+    sent_at: datetime          # timestamp del último mensaje (UTC)
+
+
 def _user_email() -> str:
     return os.environ.get("USER_EMAIL", "daniel@estudio-plural.co").lower()
 
@@ -173,6 +184,90 @@ def list_pending_for_reply(days: int = 7, max_threads: int = 50) -> List[Pending
 
     # Más recientes primero.
     result.sort(key=lambda x: x.received_at, reverse=True)
+    return result
+
+
+def list_awaiting_reply(
+    days: int = 14,
+    min_age_hours: int = 24,
+    max_threads: int = 50,
+) -> List[OutboundThread]:
+    """Threads donde Daniel mandó el último mensaje y nadie respondió todavía.
+
+    Filtros:
+    - Enviados en los últimos `days` días.
+    - Al menos `min_age_hours` horas desde el envío (filtro de "ya esperé suficiente").
+    - El último mensaje del thread es de Daniel (sino es inbound, no outbound pendiente).
+    - Skipea threads donde el destinatario es Daniel mismo (auto-mails, drafts a uno mismo).
+    """
+    service = get_gmail_service()
+    me = _user_email()
+
+    now = datetime.now(timezone.utc)
+    after_ts = int((now - timedelta(days=days)).timestamp())
+    before_ts = int((now - timedelta(hours=min_age_hours)).timestamp())
+
+    # in:sent + from:me + ventana temporal
+    query = f"from:me in:sent after:{after_ts} before:{before_ts}"
+
+    resp = service.users().threads().list(
+        userId="me",
+        q=query,
+        maxResults=max_threads,
+    ).execute()
+    threads = resp.get("threads", []) or []
+
+    result: List[OutboundThread] = []
+    for t in threads:
+        thread_id = t.get("id")
+        if not thread_id:
+            continue
+        try:
+            full = service.users().threads().get(
+                userId="me",
+                id=thread_id,
+                format="metadata",
+                metadataHeaders=["From", "To", "Cc", "Subject"],
+            ).execute()
+        except Exception:
+            log.exception("No se pudo leer thread %s", thread_id)
+            continue
+
+        messages = full.get("messages", []) or []
+        if not messages:
+            continue
+        last = messages[-1]
+        payload = last.get("payload", {}) or {}
+
+        # El último mensaje TIENE que ser de Daniel (sino ya le respondieron).
+        from_addrs = _parse_address_list(_header(payload, "From"))
+        if not any(me == addr or addr.endswith(me) for addr in from_addrs):
+            continue
+
+        # Verificar que el destinatario no sea Daniel mismo (auto-mails).
+        to_list = _parse_address_list(_header(payload, "To"))
+        cc_list = _parse_address_list(_header(payload, "Cc"))
+        recipients = [a for a in (to_list + cc_list) if a != me and not a.endswith(f"<{me}>")]
+        if not recipients:
+            continue
+
+        internal_ms = int(last.get("internalDate") or 0)
+        sent_at = datetime.fromtimestamp(internal_ms / 1000, tz=timezone.utc)
+        # Filtro hard de min_age_hours (la query already limits but Gmail es laxa).
+        if (now - sent_at).total_seconds() < min_age_hours * 3600:
+            continue
+
+        subject = _header(payload, "Subject") or "(sin asunto)"
+        result.append(OutboundThread(
+            thread_id=thread_id,
+            last_msg_id=last.get("id", ""),
+            subject=subject,
+            to_addrs=recipients,
+            snippet=(last.get("snippet") or "").strip(),
+            sent_at=sent_at,
+        ))
+
+    result.sort(key=lambda x: x.sent_at, reverse=True)
     return result
 
 

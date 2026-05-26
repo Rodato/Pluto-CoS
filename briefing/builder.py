@@ -25,12 +25,20 @@ from pathlib import Path
 from briefing.prioritizer import PrioritizedTask, prioritize, prioritize_open_tasks
 from calendar_api import client as cal_client
 from db import client as db
-from gmail_api.client import PendingThread, list_pending_for_reply
+from gmail_api.client import (
+    PendingThread,
+    list_awaiting_reply as list_gmail_awaiting,
+    list_pending_for_reply,
+)
 from llm.email_filter import filter_actionable as filter_emails
+from llm.outbound_filter import AwaitingItem, filter_awaiting_reply
 from llm.slack_filter import filter_actionable as filter_slack
 from obsidian.parser import ExtractedTask, extract_tasks
 from obsidian.reader import list_new_or_modified_notes, project_from_path, read_note
-from slack_api.client import list_all_pending as list_slack_pending
+from slack_api.client import (
+    list_all_pending as list_slack_pending,
+    list_outbound_awaiting as list_slack_awaiting,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +57,7 @@ class BriefingResult:
     emails_actionable: int = 0    # los que el LLM marcó como accionables
     slack_pending: int = 0        # mensajes heurísticos (DMs + menciones)
     slack_actionable: int = 0     # los que el LLM marcó como accionables
+    awaiting_reply: List[AwaitingItem] = field(default_factory=list)  # outbound esperando respuesta
 
 
 def _tz() -> ZoneInfo:
@@ -369,6 +378,9 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
                 except Exception:
                     log.exception("No pude actualizar priority de %s", pt.task_id)
 
+    # 4. Outbound: mensajes que Daniel envió y aún esperan respuesta.
+    awaiting = _build_awaiting_reply()
+
     return BriefingResult(
         briefing_date=briefing_date,
         today_events=today_events,
@@ -379,4 +391,33 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         emails_actionable=emails_actionable,
         slack_pending=slack_pending,
         slack_actionable=slack_actionable,
+        awaiting_reply=awaiting,
     )
+
+
+def _build_awaiting_reply() -> List[AwaitingItem]:
+    """Recolecta outbound de Gmail + Slack, lo pasa por el filtro LLM,
+    y devuelve los que realmente esperan respuesta."""
+    try:
+        gmail_out = list_gmail_awaiting(days=14, min_age_hours=24)
+    except Exception:
+        log.exception("Error listando Gmail awaiting reply")
+        gmail_out = []
+
+    try:
+        slack_out = list_slack_awaiting(days=7, min_age_hours=6)
+    except RuntimeError:
+        log.info("Slack no está configurado; skip outbound")
+        slack_out = []
+    except Exception:
+        log.exception("Error listando Slack awaiting reply")
+        slack_out = []
+
+    if not gmail_out and not slack_out:
+        return []
+
+    try:
+        return filter_awaiting_reply(gmail_out, slack_out)
+    except Exception:
+        log.exception("Error filtrando outbound con LLM")
+        return []

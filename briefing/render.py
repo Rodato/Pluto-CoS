@@ -45,6 +45,9 @@ Igual, pero con las P1. Más conciso (1 oración por proyecto bastante).
 🟡 <b>No lo perdás de vista</b>
 Pasada rápida con las P2: una oración corta por proyecto, solo lo que merece estar arriba del radar. Si hay muchas, agrupá.
 
+📤 <b>Esperando respuesta</b>
+Solo si `esperando_respuesta` en el JSON tiene items. Por cada item, 1 línea de prosa: "<b>A &lt;persona&gt;</b> (correo|Slack): &lt;qué le pediste&gt; — &lt;hace cuánto&gt;". Agrupá por persona/canal si hay varios al mismo destinatario. NO mencionés el subject completo, parafraseá. Si hay >5 items, mostrá los 5 más viejos y agregá "+ N más esperando" al final.
+
 REGLAS:
 - HTML simple: solo <b> y <i>. NO uses markdown ni headers (#).
 - Si una sección no tiene tareas, omitirla COMPLETAMENTE (ni el header).
@@ -85,12 +88,24 @@ def _build_narrative_payload(briefing: BriefingResult, tasks: List[PrioritizedTa
             "por_que": t.rationale,
         })
 
+    awaiting = [
+        {
+            "canal": a.kind,
+            "a_quien": a.recipients_label,
+            "esperando": a.waiting_for,
+            "contexto": a.reason,
+            "enviado": a.sent_at_iso,
+        }
+        for a in briefing.awaiting_reply
+    ]
+
     return {
         "fecha": briefing.briefing_date.isoformat(),
         "agenda": agenda,
         "P0_urgente_hoy": by_priority["P0"],
         "P1_atender_pronto": by_priority["P1"],
         "P2_no_perder_de_vista": by_priority["P2"],
+        "esperando_respuesta": awaiting,
     }
 
 
@@ -140,7 +155,7 @@ def render_telegram(briefing: BriefingResult) -> List[str]:
     selected = _select_for_narrative(briefing.prioritized)
     hidden_count = len(briefing.prioritized) - len(selected)
 
-    if not selected and not briefing.today_events:
+    if not selected and not briefing.today_events and not briefing.awaiting_reply:
         body = "☀️ <b>Buenos días, Daniel</b>\nHoy no tenés agenda ni tareas pendientes. Aprovechá."
         return _finalize_chunks(_pack_chunks([body, _footer(briefing, hidden_count)]))
 
@@ -208,6 +223,17 @@ def _fallback_narrative(briefing: BriefingResult, selected: List[PrioritizedTask
             extra = len(lst) - 3
             tail = f" (+{extra} más)" if extra > 0 else ""
             parts.append(f"<b>{html.escape(proj)}:</b> {titles}{tail}")
+
+    if briefing.awaiting_reply:
+        parts.append("")
+        parts.append("📤 <b>Esperando respuesta</b>")
+        for a in briefing.awaiting_reply[:8]:
+            channel = "correo" if a.kind == "gmail" else "Slack"
+            who = html.escape(a.recipients_label or a.subject_or_channel)
+            waiting = html.escape(a.waiting_for or a.reason or "respuesta")
+            parts.append(f"• <b>{who}</b> ({channel}): {waiting}")
+        if len(briefing.awaiting_reply) > 8:
+            parts.append(f"<i>+ {len(briefing.awaiting_reply) - 8} más</i>")
     return "\n".join(parts)
 
 
@@ -269,6 +295,20 @@ def render_markdown(briefing: BriefingResult) -> str:
                 meta.append(f"📅 {it.deadline_hint}")
             parts.append("  ·  ".join(meta) + "\n")
             parts.append(f"<sub>Fuente: `{it.source_note}`</sub>\n")
+
+    if briefing.awaiting_reply:
+        parts.append(f"## 📤 Esperando respuesta ({len(briefing.awaiting_reply)})\n")
+        for a in briefing.awaiting_reply:
+            channel_label = "📧 Correo" if a.kind == "gmail" else "💬 Slack"
+            target = a.recipients_label or a.subject_or_channel
+            parts.append(f"### {channel_label} — a {target}")
+            parts.append(f"**Esperando:** {a.waiting_for}")
+            if a.reason:
+                parts.append(f"_{a.reason}_")
+            parts.append(f"<sub>Enviado: {a.sent_at_iso}</sub>")
+            if a.permalink:
+                parts.append(f"<sub>[Abrir]({a.permalink})</sub>")
+            parts.append("")
 
     parts.append("---")
     parts.append(

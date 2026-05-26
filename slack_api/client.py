@@ -35,6 +35,19 @@ class PendingSlackMessage:
     permalink: str              # URL al mensaje
 
 
+@dataclass
+class OutboundSlackMessage:
+    """Mensaje que envió Daniel y aún no le respondieron."""
+    source_type: str            # "dm" | "group_dm"
+    channel_id: str
+    channel_name: str           # "DM con X" o "Grupo con X, Y, Z"
+    recipients: List[str]       # display_names del/los destinatario(s)
+    text: str
+    ts: str
+    sent_at: datetime
+    permalink: str
+
+
 def _client() -> WebClient:
     token = os.environ.get("SLACK_USER_TOKEN")
     if not token:
@@ -219,6 +232,104 @@ def list_unread_mentions(days: int = 7, max_results: int = 30) -> List[PendingSl
             permalink=m.get("permalink") or _permalink(ch_id, ts),
         ))
 
+    return result
+
+
+def list_outbound_awaiting(
+    days: int = 7,
+    min_age_hours: int = 6,
+    max_channels: int = 50,
+) -> List[OutboundSlackMessage]:
+    """DMs y group DMs donde el último mensaje es de Daniel y todavía no respondieron.
+
+    - DMs (im): 1:1 con otra persona.
+    - Group DMs (mpim): multi-persona (no public/private channels, son ruidosos).
+
+    Filtros:
+    - Último mensaje del canal es de Daniel.
+    - Enviado entre `min_age_hours` y `days` atrás.
+    """
+    cli = _client()
+    me = _my_user_id()
+    now = datetime.now(timezone.utc)
+    cutoff_old = (now - timedelta(days=days)).timestamp()
+    cutoff_recent = (now - timedelta(hours=min_age_hours)).timestamp()
+
+    try:
+        resp = cli.conversations_list(types="im,mpim", limit=200, exclude_archived=True)
+    except SlackApiError:
+        log.exception("Slack conversations.list (im,mpim) falló")
+        return []
+
+    channels = resp.get("channels", []) or []
+    result: List[OutboundSlackMessage] = []
+
+    for ch in channels[:max_channels]:
+        ch_id = ch.get("id")
+        if not ch_id:
+            continue
+        if ch.get("is_user_deleted"):
+            continue
+
+        try:
+            hist = cli.conversations_history(channel=ch_id, limit=1)
+        except SlackApiError:
+            log.exception("conversations.history falló para %s", ch_id)
+            continue
+
+        msgs = hist.get("messages", []) or []
+        if not msgs:
+            continue
+        last = msgs[0]
+
+        ts_float = float(last.get("ts", "0") or 0)
+        if ts_float < cutoff_old:
+            continue
+        if ts_float > cutoff_recent:
+            # Demasiado reciente, todavía no espero respuesta.
+            continue
+        if last.get("user") != me:
+            continue
+        if _is_skippable_message(last):
+            continue
+
+        text = (last.get("text") or "").strip()
+        if not text:
+            continue
+
+        # Resolver destinatarios + nombre del canal.
+        if ch.get("is_im"):
+            other_user = ch.get("user") or ""
+            other_name = _user_display_name(other_user) if other_user else "(desconocido)"
+            channel_name = f"DM con {other_name}"
+            recipients = [other_name]
+            source_type = "dm"
+        else:
+            # mpim — fetch miembros
+            try:
+                mem_resp = cli.conversations_members(channel=ch_id, limit=20)
+                member_ids = [u for u in (mem_resp.get("members") or []) if u != me]
+            except SlackApiError:
+                member_ids = []
+            recipients = [_user_display_name(u) for u in member_ids[:5]]
+            extra = len(member_ids) - len(recipients)
+            tail = f" (+{extra})" if extra > 0 else ""
+            channel_name = f"Grupo con {', '.join(recipients)}{tail}"
+            source_type = "group_dm"
+
+        ts = last.get("ts") or ""
+        result.append(OutboundSlackMessage(
+            source_type=source_type,
+            channel_id=ch_id,
+            channel_name=channel_name,
+            recipients=recipients,
+            text=text[:1500],
+            ts=ts,
+            sent_at=_ts_to_datetime(ts),
+            permalink=_permalink(ch_id, ts),
+        ))
+
+    result.sort(key=lambda x: x.sent_at, reverse=True)
     return result
 
 
