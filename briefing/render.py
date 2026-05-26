@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 import json
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from briefing.builder import BriefingResult
 from briefing.prioritizer import PrioritizedTask
@@ -29,6 +29,24 @@ TELEGRAM_CHUNK_LIMIT = 3800
 # Proyectos que no aportan al briefing conversacional.
 _HIDDEN_PROJECTS = {"Varios", ""}
 
+# Label legible del canal de origen para que el narrador lo cite ("(correo)", etc.)
+_CHANNEL_LABELS = {
+    "gmail": "correo",
+    "slack": "Slack",
+    "granola": "reunión",
+}
+
+
+def _channel_label(source: Optional[str]) -> str:
+    return _CHANNEL_LABELS.get((source or "").lower(), "")
+
+
+def _fmt_task_with_channel(t) -> str:
+    """Fallback render: 'título (canal)' si hay canal, sino solo el título."""
+    label = _channel_label(t.source)
+    title = html.escape(t.title)
+    return f"{title} ({label})" if label else title
+
 _NARRATIVE_SYSTEM_PROMPT = """Sos el Chief-of-Staff de Daniel (CTO de Estudio Plural). Entregás el briefing matutino en formato conversacional, español rioplatense, cercano pero profesional. Hablás de vos.
 
 Estructura OBLIGATORIA del mensaje (HTML para Telegram, máximo 3500 chars TOTAL):
@@ -44,6 +62,12 @@ Igual, pero con las P1. Más conciso (1 oración por proyecto bastante).
 
 🟡 <b>No lo perdás de vista</b>
 Pasada rápida con las P2: una oración corta por proyecto, solo lo que merece estar arriba del radar. Si hay muchas, agrupá.
+
+CITAR EL CANAL DE CADA TAREA: cada item en el JSON trae `canal` (correo / Slack / reunión / vacío). Cuando narres las tareas, mencioná el canal explícitamente en la prosa para que Daniel sepa dónde ir a buscar. Ejemplos:
+- "En <b>Apapáchar</b> tenés un correo pendiente de Rafael sobre datos unificados..."
+- "En <b>Lighting_AI</b>, por Slack te quedó pedir el contrato a legal..."
+- "En <b>Puddle</b>, de la reunión del lunes quedó preparar los insumos del benchmark..."
+Si el canal está vacío, no inventes; simplemente omití la referencia al canal y narrá la tarea. Si en un proyecto las tareas vienen de varios canales mixtos, agrupá por canal ("Por correo... y en Slack...").
 
 📤 <b>Esperando respuesta</b>
 Solo si `esperando_respuesta` en el JSON tiene items. Por cada item, 1 línea de prosa: "<b>A &lt;persona&gt;</b> (correo|Slack): &lt;qué le pediste&gt; — &lt;hace cuánto&gt;". Agrupá por persona/canal si hay varios al mismo destinatario. NO mencionés el subject completo, parafraseá. Si hay >5 items, mostrá los 5 más viejos y agregá "+ N más esperando" al final.
@@ -86,6 +110,7 @@ def _build_narrative_payload(briefing: BriefingResult, tasks: List[PrioritizedTa
         bucket.append({
             "titulo": t.title,
             "por_que": t.rationale,
+            "canal": _channel_label(t.source),
         })
 
     awaiting = [
@@ -219,7 +244,9 @@ def _fallback_narrative(briefing: BriefingResult, selected: List[PrioritizedTask
         for t in items:
             by_proj.setdefault(t.project or "Varios", []).append(t)
         for proj, lst in by_proj.items():
-            titles = "; ".join(html.escape(t.title) for t in lst[:3])
+            titles = "; ".join(
+                _fmt_task_with_channel(t) for t in lst[:3]
+            )
             extra = len(lst) - 3
             tail = f" (+{extra} más)" if extra > 0 else ""
             parts.append(f"<b>{html.escape(proj)}:</b> {titles}{tail}")

@@ -28,6 +28,7 @@ class PrioritizedTask:
     deadline_hint: Optional[str]
     task_id: Optional[str] = None  # set cuando viene de DB
     project: Optional[str] = None  # nombre de la carpeta Granola/<project>/
+    source: Optional[str] = None   # gmail | slack | granola — canal de origen
 
 
 _VALID_PRIORITIES = {"P0", "P1", "P2", "P3"}
@@ -126,6 +127,7 @@ def prioritize(tasks: List[ExtractedTask], today_iso: str) -> List[PrioritizedTa
                 estimated_minutes=t.estimated_minutes,
                 deadline_hint=t.deadline_hint,
                 project=t.project,
+                source=t.source,
             )
         )
     return result
@@ -142,6 +144,7 @@ def _fallback(tasks: List[ExtractedTask], priority: str, rationale: str) -> List
             estimated_minutes=t.estimated_minutes,
             deadline_hint=t.deadline_hint,
             project=t.project,
+            source=t.source,
         )
         for t in tasks
     ]
@@ -222,6 +225,7 @@ def prioritize_open_tasks(open_tasks: List[dict], today_iso: str) -> List[Priori
                 deadline_hint=None,
                 task_id=str(t.get("id")) if t.get("id") else None,
                 project=t.get("project") or "Varios",
+                source=t.get("source"),
             )
         )
     return result
@@ -239,6 +243,7 @@ def _fallback_from_db(open_tasks: List[dict], rationale: str) -> List[Prioritize
             deadline_hint=None,
             task_id=str(t.get("id")) if t.get("id") else None,
             project=t.get("project") or "Varios",
+            source=t.get("source"),
         )
         for t in open_tasks
     ]
