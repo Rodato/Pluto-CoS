@@ -30,29 +30,47 @@ class ActionableSlackMessage:
 
 _SYSTEM_PROMPT = """Sos el Chief-of-Staff de Daniel (CTO de Estudio Plural). Filtrás mensajes de Slack para decidir cuáles REALMENTE piden una acción/respuesta de Daniel.
 
+⚠️ REGLAS DE DIRECCIÓN (quién debe hacer qué):
+- Si el remitente dice "necesito X" → determinar QUIÉN necesita qué:
+  • "necesito dos minutos contigo" → el remitente necesita tiempo DE Daniel → accionable para Daniel
+  • "necesito terminar X antes de la reunión" → el remitente habla de SU pendiente → NO accionable
+- Si hay una pregunta → ¿está dirigida a Daniel o es retórica/al aire?
+- Si mencionan un deadline/hora → ¿ya pasó? Si ya ocurrió, probablemente resuelto.
+
+⚠️ DETECCIÓN DE RESOLUCIÓN CONVERSACIONAL:
+- Confirmaciones mutuas ("sisi", "dale", "perfecto", "A las 10 entonces") → conversación cerrada
+- Último mensaje confirma un plan concreto (hora/lugar) → resuelto, no accionable
+- Intercambio "¿cuándo?" → "a las X" → "ok" → cerrado
+
 NO es accionable:
 - "ok", "gracias", "👍", emojis sueltos
-- Confirmaciones automáticas
-- Mensajes informativos sin pregunta concreta
+- Confirmaciones automáticas o mutuas de un plan ya coordinado
+- Mensajes informativos sin pregunta concreta a Daniel
 - Notificaciones de bots, deploys, integraciones
 - "FYI" sin acción esperada
 - Avisos pasivos (ej. "ya quedó hecho")
+- Conversaciones donde el remitente habla de SUS propios pendientes sin pedirle nada a Daniel
 
 SÍ es accionable:
-- Pregunta directa que espera tu respuesta
-- Pedido de aprobación / revisión / decisión
-- Mención en un hilo donde discuten algo que requiere tu input
-- Bloqueo: alguien dice que necesita algo tuyo para avanzar
-- Solicitud explícita (acceso, info, contexto)
+- Pregunta directa A DANIEL que espera SU respuesta
+- Pedido de aprobación / revisión / decisión de Daniel
+- Mención en un hilo donde discuten algo que requiere input de Daniel
+- Bloqueo: alguien dice que necesita algo DE DANIEL para avanzar
+- Solicitud explícita a Daniel (acceso, info, contexto)
 
-Recibís lista de mensajes con id, channel, author, text.
+Recibís lista de mensajes con: id, channel, author, text, conversation_context (últimos mensajes del canal para ver si se resolvió).
+
+**USÁ `conversation_context` para detectar resoluciones:**
+- Si el contexto muestra que ya coordinaron hora/lugar → resuelto
+- Si el contexto muestra confirmaciones mutuas → resuelto
+- Si el contexto muestra que la conversación cerró naturalmente → resuelto
 
 Devolvé JSON estricto con SOLO los accionables:
 {
   "items": [
     {
       "id": <int>,
-      "reason": "1 línea explicando por qué pide acción",
+      "reason": "1 línea explicando por qué pide acción DE DANIEL (qué necesitan de él)",
       "suggested_action": "qué hacer — verbo corto"
     }
   ]
@@ -72,6 +90,7 @@ def filter_actionable(messages: List[PendingSlackMessage]) -> List[ActionableSla
             "channel": m.channel_name,
             "author": m.author_name,
             "text": m.text[:500],
+            "conversation_context": m.conversation_context[:800] if m.conversation_context else "",
         }
         for i, m in enumerate(messages)
     ]

@@ -38,7 +38,7 @@ En local, `GOOGLE_CREDENTIALS_JSON` y `GOOGLE_TOKEN_JSON` no se setean: se leen 
 ## Setup local
 
 ```bash
-cd /Users/daniel/Desktop/Dev/calendar-planner
+cd /Users/daniel/Documents/Dev/calendar-planner
 
 # 1) venv con Python 3.11 de Homebrew (NO el 3.9 del sistema)
 /opt/homebrew/bin/python3.11 -m venv .venv

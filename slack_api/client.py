@@ -33,6 +33,7 @@ class PendingSlackMessage:
     ts: str                     # timestamp Slack (formato "1234567890.123456")
     received_at: datetime       # parsed UTC
     permalink: str              # URL al mensaje
+    conversation_context: str = ""  # últimos N mensajes del canal (para detección de resolución)
 
 
 @dataclass
@@ -119,6 +120,55 @@ def _is_skippable_message(msg: dict) -> bool:
     return False
 
 
+def _get_conversation_context(channel_id: str, around_ts: str, limit: int = 5) -> str:
+    """Lee los últimos N mensajes del canal alrededor de `around_ts` para
+    tener contexto conversacional (detección de resolución, confirmaciones).
+
+    Devuelve string con formato "[author] mensaje" por línea.
+    """
+    cli = _client()
+    try:
+        # Lee más mensajes de los necesarios para poder incluir contexto previo
+        hist = cli.conversations_history(channel=channel_id, limit=limit * 2)
+    except SlackApiError:
+        log.exception("No se pudo leer historial para contexto de %s", channel_id)
+        return ""
+
+    msgs = hist.get("messages", []) or []
+    if not msgs:
+        return ""
+
+    # Ordenar cronológicamente (API devuelve más recientes primero)
+    msgs.sort(key=lambda m: float(m.get("ts", "0") or 0))
+
+    # Encontrar el mensaje target
+    target_idx = next(
+        (i for i, m in enumerate(msgs) if m.get("ts") == around_ts),
+        None
+    )
+    if target_idx is None:
+        # Si no encontramos el mensaje exacto, tomar los últimos N
+        relevant = msgs[-limit:]
+    else:
+        # Tomar los N mensajes alrededor del target
+        start = max(0, target_idx - limit // 2)
+        end = min(len(msgs), target_idx + limit // 2 + 1)
+        relevant = msgs[start:end]
+
+    # Formatear como conversación legible
+    lines = []
+    for m in relevant:
+        if _is_skippable_message(m):
+            continue
+        user_id = m.get("user", "")
+        author = _user_display_name(user_id) if user_id else "Sistema"
+        text = (m.get("text") or "").strip()[:200]
+        if text:
+            lines.append(f"[{author}] {text}")
+
+    return "\n".join(lines[-limit:]) if lines else ""
+
+
 def list_pending_dms(days: int = 7, max_dms: int = 50) -> List[PendingSlackMessage]:
     """DMs (1:1) donde el último mensaje no es del user y es reciente."""
     cli = _client()
@@ -168,6 +218,7 @@ def list_pending_dms(days: int = 7, max_dms: int = 50) -> List[PendingSlackMessa
             continue
 
         ts = last.get("ts") or ""
+        context = _get_conversation_context(ch_id, ts, limit=5)
         result.append(PendingSlackMessage(
             source_type="dm",
             channel_id=ch_id,
@@ -178,6 +229,7 @@ def list_pending_dms(days: int = 7, max_dms: int = 50) -> List[PendingSlackMessa
             ts=ts,
             received_at=_ts_to_datetime(ts),
             permalink=_permalink(ch_id, ts),
+            conversation_context=context,
         ))
 
     return result
@@ -219,6 +271,7 @@ def list_unread_mentions(days: int = 7, max_results: int = 30) -> List[PendingSl
         if not text:
             continue
         ts = m.get("ts") or ""
+        context = _get_conversation_context(ch_id, ts, limit=5)
 
         result.append(PendingSlackMessage(
             source_type="mention",
@@ -230,6 +283,7 @@ def list_unread_mentions(days: int = 7, max_results: int = 30) -> List[PendingSl
             ts=ts,
             received_at=_ts_to_datetime(ts),
             permalink=m.get("permalink") or _permalink(ch_id, ts),
+            conversation_context=context,
         ))
 
     return result

@@ -37,7 +37,7 @@ El v1 (calendar read + RSVP cada 15 min) sigue corriendo en paralelo.
 ## Correr en local
 
 ```bash
-cd /Users/daniel/Desktop/Dev/calendar-planner
+cd /Users/daniel/Documents/Dev/calendar-planner
 
 # Primera vez
 python3 -m venv .venv
@@ -97,6 +97,14 @@ python3 -m venv .venv
 - **4096 chars por mensaje.** El briefing trocea por proyecto vía `render_telegram` que devuelve `List[str]`. Cualquier render que pueda crecer (Gmail/Slack/pendientes a futuro) debe chequear largo.
 - **64 bytes en `callback_data`.** Los `event_id` de invitaciones recurrentes de Google (`base_YYYYMMDDTHHMMSSZ`) los superan. Patrón actual: callback_data corto (`rsvp:accepted`) + resolver el contexto en DB usando `query.message.message_id` (ver `db.get_event_id_by_message_id`).
 
+### Slack — contexto conversacional (2026-05-29)
+- Cada `PendingSlackMessage` ahora incluye `conversation_context` (últimos 5 mensajes del canal) para detectar resoluciones conversacionales.
+- Los prompts LLM (`llm/slack_filter.py` y `llm/outbound_filter.py`) fueron reforzados con:
+  1. **Análisis de dirección**: distinguir "Alejandro necesita 2 minutos" (él pide a Daniel) vs "Daniel necesita X" (Daniel pide a otro).
+  2. **Detección de resolución**: confirmaciones mutuas ("sisi", "A las 10 entonces") → conversación cerrada.
+  3. **Awareness temporal**: si ya pasó el horario mencionado → probablemente resuelto offline.
+- Objetivo: reducir falsos positivos donde el LLM marca como pendiente algo ya coordinado o resuelto.
+
 ## Pipeline del chequeo (cron v1)
 ```
 Cada 15 min
@@ -124,7 +132,7 @@ Cada 15 min
 Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre la agenda (tool calling sobre wrappers de calendar).
 
 ## Repos GitHub
-- `Rodato/Pluto-CoS` (este repo, código — público). Local: `~/Desktop/Dev/calendar-planner`. El nombre del directorio local se mantiene `calendar-planner` por historia.
+- `Rodato/Pluto-CoS` (este repo, código — público). Local: `~/Documents/Dev/calendar-planner`. El nombre del directorio local se mantiene `calendar-planner` por historia.
 - `Rodato/obsidian-estudio-plural` (privado, vault de Obsidian sincronizado por plugin Obsidian Git — Railway lo clona al startup via `OBSIDIAN_VAULT_GIT_REPO`)
 
 ## Deploy
