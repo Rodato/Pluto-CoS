@@ -25,20 +25,24 @@ from pathlib import Path
 from briefing.prioritizer import PrioritizedTask, prioritize, prioritize_open_tasks
 from calendar_api import client as cal_client
 from db import client as db
-from gmail_api.client import (
-    PendingThread,
-    list_awaiting_reply as list_gmail_awaiting,
-    list_pending_for_reply,
-)
-from llm.email_filter import filter_actionable as filter_emails
-from llm.outbound_filter import AwaitingItem, filter_awaiting_reply
-from llm.slack_filter import filter_actionable as filter_slack
 from obsidian.parser import ExtractedTask, extract_tasks
 from obsidian.reader import list_new_or_modified_notes, project_from_path, read_note
-from slack_api.client import (
-    list_all_pending as list_slack_pending,
-    list_outbound_awaiting as list_slack_awaiting,
-)
+
+# --- DESACTIVADO (2026-06-02): Gmail + Slack fuera del briefing por ahora.
+# El briefing vive solo con Granola/Obsidian. Para reactivar, descomentar estos
+# imports y los bloques 1b/1c/outbound más abajo + los comandos en handlers.py.
+# from gmail_api.client import (
+#     PendingThread,
+#     list_awaiting_reply as list_gmail_awaiting,
+#     list_pending_for_reply,
+# )
+# from llm.email_filter import filter_actionable as filter_emails
+# from llm.outbound_filter import AwaitingItem, filter_awaiting_reply
+# from llm.slack_filter import filter_actionable as filter_slack
+# from slack_api.client import (
+#     list_all_pending as list_slack_pending,
+#     list_outbound_awaiting as list_slack_awaiting,
+# )
 
 log = logging.getLogger(__name__)
 
@@ -347,17 +351,18 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         new_prioritized = prioritize(granola_tasks, today_iso=briefing_date.isoformat())
         _persist_prioritized(new_prioritized, briefing_date, source="granola")
 
+    # --- DESACTIVADO (2026-06-02): Gmail + Slack fuera del briefing por ahora.
     # 1b. Ingesta Gmail: correos pendientes filtrados por LLM (últimos 7 días).
-    gmail_tasks, emails_pending, emails_actionable = _extract_from_gmail(days=7)
-    if gmail_tasks:
-        new_prioritized = prioritize(gmail_tasks, today_iso=briefing_date.isoformat())
-        _persist_prioritized(new_prioritized, briefing_date, source="gmail")
+    # gmail_tasks, emails_pending, emails_actionable = _extract_from_gmail(days=7)
+    # if gmail_tasks:
+    #     new_prioritized = prioritize(gmail_tasks, today_iso=briefing_date.isoformat())
+    #     _persist_prioritized(new_prioritized, briefing_date, source="gmail")
 
     # 1c. Ingesta Slack: DMs + menciones filtrados por LLM (últimos 7 días).
-    slack_tasks, slack_pending, slack_actionable = _extract_from_slack(days=7)
-    if slack_tasks:
-        new_prioritized = prioritize(slack_tasks, today_iso=briefing_date.isoformat())
-        _persist_prioritized(new_prioritized, briefing_date, source="slack")
+    # slack_tasks, slack_pending, slack_actionable = _extract_from_slack(days=7)
+    # if slack_tasks:
+    #     new_prioritized = prioritize(slack_tasks, today_iso=briefing_date.isoformat())
+    #     _persist_prioritized(new_prioritized, briefing_date, source="slack")
 
     # 2. Repriorización del estado completo
     try:
@@ -379,7 +384,8 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
                     log.exception("No pude actualizar priority de %s", pt.task_id)
 
     # 4. Outbound: mensajes que Daniel envió y aún esperan respuesta.
-    awaiting = _build_awaiting_reply()
+    # --- DESACTIVADO (2026-06-02): outbound depende de Gmail + Slack.
+    # awaiting = _build_awaiting_reply()
 
     return BriefingResult(
         briefing_date=briefing_date,
@@ -387,11 +393,8 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         prioritized=prioritized,
         notes_processed=processed,
         notes_skipped_age=skipped,
-        emails_pending=emails_pending,
-        emails_actionable=emails_actionable,
-        slack_pending=slack_pending,
-        slack_actionable=slack_actionable,
-        awaiting_reply=awaiting,
+        # emails_*/slack_*/awaiting_reply quedan en sus defaults (0 / []) mientras
+        # Gmail + Slack estén desactivados.
     )
 
 

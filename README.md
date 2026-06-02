@@ -94,6 +94,6 @@ Te muestra la base64 del nuevo `token.json` para pegar en Railway como `GOOGLE_T
 
 **Fase 1 (CoS agente) — siguiente**: briefing matutino 8 AM Bogotá con tareas priorizadas P0–P3, leídas de Calendar + Granola/Obsidian, entregadas por Telegram y persistidas en tabla `tasks`. Las tablas ya están en `db/schema.sql`.
 
-**Fase 2**: Gmail (compromisos en enviados, emails sin responder).
-**Fase 3**: Slack (bloqueos del equipo + conocimiento transversal).
+**Fase 2**: Gmail (compromisos en enviados, emails sin responder). _Desactivado 2026-06-02 — código en disco, call-sites comentados._
+**Fase 3**: Slack (bloqueos del equipo + conocimiento transversal). _Desactivado 2026-06-02 — código en disco, call-sites comentados._
 **Fase 4**: Sparring pages en Obsidian + loop de aprendizaje (priorizado vs hecho).

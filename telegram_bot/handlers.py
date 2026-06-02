@@ -79,8 +79,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/libre — slots libres\n"
         "/revisar — chequear invitaciones ya\n"
         "/briefing — generar briefing matutino on-demand\n"
-        "/correos — correos pendientes de respuesta\n"
-        "/slack — mensajes Slack pendientes\n"
         "/pendientes — lista de tareas abiertas + botones ✅\n"
         "/autorizar — conectar Google Calendar\n\n"
         "También podés escribirme en lenguaje natural ('¿qué tengo el viernes?', "
@@ -198,6 +196,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# DESACTIVADO (2026-06-02): sin registrar en register(). Reactivar cuando vuelva Gmail.
 @authorized_only
 async def cmd_correos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista correos que requieren respuesta — heurística Gmail + filtro LLM."""
@@ -360,6 +359,7 @@ async def on_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("✅ Marcada como hecha")
 
 
+# DESACTIVADO (2026-06-02): sin registrar en register(). Reactivar cuando vuelva Slack.
 @authorized_only
 async def cmd_slack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista mensajes de Slack que requieren tu respuesta — DMs + menciones + LLM filter."""
@@ -492,8 +492,10 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("libre", cmd_libre))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
-    app.add_handler(CommandHandler("correos", cmd_correos))
-    app.add_handler(CommandHandler("slack", cmd_slack))
+    # --- DESACTIVADO (2026-06-02): Gmail + Slack fuera de alcance por ahora.
+    # Las funciones cmd_correos / cmd_slack quedan definidas abajo para reactivar.
+    # app.add_handler(CommandHandler("correos", cmd_correos))
+    # app.add_handler(CommandHandler("slack", cmd_slack))
     app.add_handler(CommandHandler("pendientes", cmd_pendientes))
     app.add_handler(CallbackQueryHandler(on_task_done, pattern=r"^done:"))
     app.add_handler(CallbackQueryHandler(on_rsvp, pattern=r"^rsvp:"))
