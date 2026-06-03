@@ -139,7 +139,7 @@ Cada 15 min
 Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre la agenda (tool calling sobre wrappers de calendar).
 
 ## Repos GitHub
-- `Rodato/Pluto-CoS` (este repo, código — público). Local: `~/Documents/Dev/calendar-planner`. El nombre del directorio local se mantiene `calendar-planner` por historia.
+- `Rodato/Pluto-CoS` (este repo, código — público). Local: `~/Documents/Dev/Pluto-CoS`. (Antes el dir local se llamaba `calendar-planner`; renombrado a `Pluto-CoS` para alinear con el repo.)
 - `Rodato/obsidian-estudio-plural` (privado, vault de Obsidian sincronizado por plugin Obsidian Git — Railway lo clona al startup via `OBSIDIAN_VAULT_GIT_REPO`)
 
 ## Deploy
