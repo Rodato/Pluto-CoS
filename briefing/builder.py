@@ -46,6 +46,14 @@ from obsidian.reader import list_new_or_modified_notes, project_from_path, read_
 
 log = logging.getLogger(__name__)
 
+# --- DESACTIVADO (2026-06-02): fuentes activas del briefing.
+# Gmail + Slack están apagados (ver bloques 1b/1c). Sus tareas históricas
+# siguen con status='open' en `tasks` y, como ya no se ingieren ni se
+# auto-cierran, se colaban a la repriorización diaria (paso 2) y reaparecían
+# cada mañana. Filtramos la repriorización a estas fuentes. Para reactivar
+# Gmail/Slack, sumá "gmail"/"slack" a este set (además de descomentar 1b/1c).
+_ACTIVE_TASK_SOURCES = {"granola", "calendar", "manual"}
+
 # Ventana de notas a procesar: desde el lunes de la SEMANA ANTERIOR (semana
 # ISO local). Una nota con mtime previo a ese lunes se ignora.
 
@@ -370,6 +378,13 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
     except Exception:
         log.exception("No se pudieron leer open tasks")
         open_tasks = []
+
+    # Excluir tareas de fuentes desactivadas (Gmail/Slack): quedaron 'open' en DB
+    # pero ya no se ingieren ni se auto-cierran, así que no deben repriorizarse.
+    open_tasks = [
+        t for t in open_tasks
+        if (t.get("source") or "granola") in _ACTIVE_TASK_SOURCES
+    ]
 
     prioritized: List[PrioritizedTask] = []
     if open_tasks:
