@@ -34,12 +34,12 @@ El norte cambió de "v2 = pipeline Granola" a **briefing matutino tipo Chief-of-
 
 El v1 (calendar read + RSVP cada 15 min) sigue corriendo en paralelo.
 
-> **DESACTIVADO (2026-06-02):** Gmail (Fase 2) y Slack (Fase 3) están **apagados** en
-> producción — no daban buena señal. El briefing vive solo con Granola/Obsidian + el
-> aviso de eventos nuevos del calendario. El código sigue en disco (`gmail_api/`,
-> `slack_api/`, `llm/email_filter.py`, `llm/slack_filter.py`, `llm/outbound_filter.py`)
-> y los call-sites están comentados con marcadores `DESACTIVADO (2026-06-02)` en
-> `briefing/builder.py` y `telegram_bot/handlers.py`. Reactivar = descomentar esos puntos.
+> **Ajuste (2026-06-11):** El briefing vive ahora con **Calendar + Gmail**. Granola/Obsidian
+> se trabaja directamente con Claude (no desde el bot). Slack sigue desactivado.
+> Código inactivo: `obsidian/` (ya no se llama en el pipeline), `slack_api/`,
+> `llm/slack_filter.py`. Los call-sites están comentados con marcadores `DESACTIVADO` en
+> `briefing/builder.py`, `main.py` y `telegram_bot/handlers.py`.
+> Reactivar Gmail outbound = ya está activo. Reactivar Granola = descomentar bloque 1a en builder.py.
 
 ## Correr en local
 
@@ -130,8 +130,8 @@ Cada 15 min
 | `/semana` | Agenda de la semana |
 | `/libre <fecha hora>` | "/libre martes 3pm" → ¿hay algo a esa hora? |
 | `/revisar` | Fuerza chequeo manual de invitaciones (sin esperar al cron) |
-| `/briefing` | Genera el briefing matutino on-demand (sin esperar al cron de las 8 AM) |
-| ~~`/correos`~~ | **DESACTIVADO (2026-06-02)** — Gmail fuera de alcance por ahora |
+| `/correos` | Correos que esperan respuesta (Gmail — filtro LLM) |
+| `/briefing` | Genera el briefing matutino on-demand: Calendar + Gmail (sin esperar al cron de las 8 AM) |
 | ~~`/slack`~~ | **DESACTIVADO (2026-06-02)** — Slack fuera de alcance por ahora |
 | `/pendientes` | Tareas abiertas (`tasks` Neon) con botones ✅ para marcar hecho |
 | `/autorizar` | Devuelve instrucciones para correr `oauth_local.py` (la auth es local, no se hace por Telegram) |

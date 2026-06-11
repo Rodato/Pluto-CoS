@@ -28,16 +28,13 @@ from db import client as db
 from obsidian.parser import ExtractedTask, extract_tasks
 from obsidian.reader import list_new_or_modified_notes, project_from_path, read_note
 
-# --- DESACTIVADO (2026-06-02): Gmail + Slack fuera del briefing por ahora.
-# El briefing vive solo con Granola/Obsidian. Para reactivar, descomentar estos
-# imports y los bloques 1b/1c/outbound más abajo + los comandos en handlers.py.
-# from gmail_api.client import (
-#     PendingThread,
-#     list_awaiting_reply as list_gmail_awaiting,
-#     list_pending_for_reply,
-# )
-# from llm.email_filter import filter_actionable as filter_emails
-# from llm.outbound_filter import AwaitingItem, filter_awaiting_reply
+from gmail_api.client import (
+    list_awaiting_reply as list_gmail_awaiting,
+    list_pending_for_reply,
+)
+from llm.email_filter import filter_actionable as filter_emails
+from llm.outbound_filter import AwaitingItem, filter_awaiting_reply
+# --- DESACTIVADO (2026-06-02): Slack fuera del briefing por ahora.
 # from llm.slack_filter import filter_actionable as filter_slack
 # from slack_api.client import (
 #     list_all_pending as list_slack_pending,
@@ -46,13 +43,11 @@ from obsidian.reader import list_new_or_modified_notes, project_from_path, read_
 
 log = logging.getLogger(__name__)
 
-# --- DESACTIVADO (2026-06-02): fuentes activas del briefing.
-# Gmail + Slack están apagados (ver bloques 1b/1c). Sus tareas históricas
-# siguen con status='open' en `tasks` y, como ya no se ingieren ni se
-# auto-cierran, se colaban a la repriorización diaria (paso 2) y reaparecían
-# cada mañana. Filtramos la repriorización a estas fuentes. Para reactivar
-# Gmail/Slack, sumá "gmail"/"slack" a este set (además de descomentar 1b/1c).
-_ACTIVE_TASK_SOURCES = {"granola", "calendar", "manual"}
+# Fuentes activas del briefing. Las tareas de fuentes inactivas (Granola/Slack)
+# se excluyen de la repriorización diaria para que no reaparezcan cada mañana.
+# Para reactivar Granola: sumá "granola" a este set + descomentar bloque 1a.
+# Para reactivar Slack: sumá "slack" + descomentar bloque 1c.
+_ACTIVE_TASK_SOURCES = {"gmail", "calendar", "manual"}
 
 # Ventana de notas a procesar: desde el lunes de la SEMANA ANTERIOR (semana
 # ISO local). Una nota con mtime previo a ese lunes se ignora.
@@ -351,21 +346,24 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
     today_events = _today_events(today_local)
     user_id = _user_id()
 
-    # 1a. Ingesta Granola: notas nuevas dentro de la ventana (esta semana + anterior).
-    window_start = _window_start(briefing_date, tz)
-    log.info("Ventana de notas: desde %s", window_start.isoformat())
-    granola_tasks, processed, skipped = _extract_from_granola(window_start)
-    if granola_tasks:
-        new_prioritized = prioritize(granola_tasks, today_iso=briefing_date.isoformat())
-        _persist_prioritized(new_prioritized, briefing_date, source="granola")
+    # --- DESACTIVADO (2026-06-11): Granola/Obsidian fuera del briefing.
+    # Preferimos trabajar las notas directamente con Claude, no desde el bot.
+    # Para reactivar: descomentar los tres bloques de abajo.
+    # window_start = _window_start(briefing_date, tz)
+    # log.info("Ventana de notas: desde %s", window_start.isoformat())
+    # granola_tasks, processed, skipped = _extract_from_granola(window_start)
+    # if granola_tasks:
+    #     new_prioritized = prioritize(granola_tasks, today_iso=briefing_date.isoformat())
+    #     _persist_prioritized(new_prioritized, briefing_date, source="granola")
+    processed, skipped = 0, 0
 
-    # --- DESACTIVADO (2026-06-02): Gmail + Slack fuera del briefing por ahora.
     # 1b. Ingesta Gmail: correos pendientes filtrados por LLM (últimos 7 días).
-    # gmail_tasks, emails_pending, emails_actionable = _extract_from_gmail(days=7)
-    # if gmail_tasks:
-    #     new_prioritized = prioritize(gmail_tasks, today_iso=briefing_date.isoformat())
-    #     _persist_prioritized(new_prioritized, briefing_date, source="gmail")
+    gmail_tasks, emails_pending, emails_actionable = _extract_from_gmail(days=7)
+    if gmail_tasks:
+        new_prioritized = prioritize(gmail_tasks, today_iso=briefing_date.isoformat())
+        _persist_prioritized(new_prioritized, briefing_date, source="gmail")
 
+    # --- DESACTIVADO (2026-06-02): Slack fuera del briefing por ahora.
     # 1c. Ingesta Slack: DMs + menciones filtrados por LLM (últimos 7 días).
     # slack_tasks, slack_pending, slack_actionable = _extract_from_slack(days=7)
     # if slack_tasks:
@@ -379,7 +377,7 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         log.exception("No se pudieron leer open tasks")
         open_tasks = []
 
-    # Excluir tareas de fuentes desactivadas (Gmail/Slack): quedaron 'open' en DB
+    # Excluir tareas de fuentes inactivas (Granola/Slack): quedaron 'open' en DB
     # pero ya no se ingieren ni se auto-cierran, así que no deben repriorizarse.
     open_tasks = [
         t for t in open_tasks
@@ -398,9 +396,8 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
                 except Exception:
                     log.exception("No pude actualizar priority de %s", pt.task_id)
 
-    # 4. Outbound: mensajes que Daniel envió y aún esperan respuesta.
-    # --- DESACTIVADO (2026-06-02): outbound depende de Gmail + Slack.
-    # awaiting = _build_awaiting_reply()
+    # 4. Outbound: mensajes que Daniel envió y aún esperan respuesta (Gmail).
+    awaiting = _build_awaiting_reply()
 
     return BriefingResult(
         briefing_date=briefing_date,
@@ -408,28 +405,31 @@ def build_briefing(briefing_date: Optional[date] = None) -> BriefingResult:
         prioritized=prioritized,
         notes_processed=processed,
         notes_skipped_age=skipped,
-        # emails_*/slack_*/awaiting_reply quedan en sus defaults (0 / []) mientras
-        # Gmail + Slack estén desactivados.
+        emails_pending=emails_pending,
+        emails_actionable=emails_actionable,
+        awaiting_reply=awaiting,
+        # slack_pending/slack_actionable quedan en 0 mientras Slack esté desactivado.
     )
 
 
 def _build_awaiting_reply() -> List[AwaitingItem]:
-    """Recolecta outbound de Gmail + Slack, lo pasa por el filtro LLM,
-    y devuelve los que realmente esperan respuesta."""
+    """Recolecta outbound de Gmail (+ Slack cuando esté activo), filtra con LLM."""
     try:
         gmail_out = list_gmail_awaiting(days=14, min_age_hours=24)
     except Exception:
         log.exception("Error listando Gmail awaiting reply")
         gmail_out = []
 
-    try:
-        slack_out = list_slack_awaiting(days=7, min_age_hours=6)
-    except RuntimeError:
-        log.info("Slack no está configurado; skip outbound")
-        slack_out = []
-    except Exception:
-        log.exception("Error listando Slack awaiting reply")
-        slack_out = []
+    # --- DESACTIVADO (2026-06-02): Slack outbound.
+    # try:
+    #     slack_out = list_slack_awaiting(days=7, min_age_hours=6)
+    # except RuntimeError:
+    #     log.info("Slack no está configurado; skip outbound")
+    #     slack_out = []
+    # except Exception:
+    #     log.exception("Error listando Slack awaiting reply")
+    #     slack_out = []
+    slack_out = []
 
     if not gmail_out and not slack_out:
         return []
