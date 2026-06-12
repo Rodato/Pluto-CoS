@@ -27,9 +27,9 @@ Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co):
 
 ## Stack
 - **FastAPI + Uvicorn** — healthcheck (`/`) para Railway. **Ya no sirve OAuth**.
-- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas). ~~Cron diario 8 AM~~ desactivado 2026-06-12 (briefing solo on-demand vía `/briefing`)
+- **APScheduler** — cron cada 15 min (invitaciones nuevas + watcher de cambios). ~~Cron diario 8 AM~~ desactivado 2026-06-12 (briefing solo on-demand vía `/briefing`)
 - **python-telegram-bot 21.6** — bot
-- **Google Calendar API v3** + OAuth2 **Installed flow** (scope `calendar.events`). Token se genera local con `oauth_local.py` y se pega en Railway como env var.
+- **Google Calendar API v3 + Gmail API** + OAuth2 **Installed flow** (scopes `calendar.events` + `gmail.readonly`). Token se genera local con `oauth_local.py` y se pega en Railway como env var.
 - **Neon** (psycopg2) — `seen_invitations`, `tracked_events` (v1) + `tasks`, `processed_notes` (Fase 1 CoS). `pending_proposals` reservada para v2.
 - **OpenRouter** vía SDK `openai` (base_url=`https://openrouter.ai/api/v1`)
 - **Deploy:** Railway
