@@ -23,6 +23,28 @@ CREATE TABLE IF NOT EXISTS seen_invitations (
 
 CREATE INDEX IF NOT EXISTS idx_seen_invitations_user ON seen_invitations(user_id);
 
+-- Snapshot de eventos donde el usuario está citado (watcher de cambios).
+-- El cron de 15 min diffea contra esto para notificar reprogramaciones,
+-- cancelaciones, cambios de invitados/lugar/descripción.
+CREATE TABLE IF NOT EXISTS tracked_events (
+    event_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    recurring_event_id TEXT,          -- id de la serie si es instancia recurrente
+    summary TEXT NOT NULL DEFAULT '',
+    start_raw TEXT NOT NULL DEFAULT '{}',   -- JSON de event.start (dateTime o date)
+    end_raw TEXT NOT NULL DEFAULT '{}',     -- JSON de event.end
+    start_ts TIMESTAMPTZ,             -- start parseado (para purga y ausencias)
+    end_ts TIMESTAMPTZ,
+    location TEXT NOT NULL DEFAULT '',
+    description_hash TEXT NOT NULL DEFAULT '',
+    attendees TEXT NOT NULL DEFAULT '[]',   -- JSON array de emails ordenados
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracked_events_user ON tracked_events(user_id);
+
 -- ============================================================
 -- Fase 1 CoS — Briefing matutino P0–P3
 -- ============================================================

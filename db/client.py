@@ -92,6 +92,89 @@ def set_invitation_rsvp(event_id: str, rsvp_status: str) -> None:
         )
 
 
+def update_invitation_message_id(event_id: str, user_id: str, telegram_message_id: int) -> None:
+    """Apunta el mapping message_id→event_id al mensaje más reciente.
+
+    Usado cuando una reprogramación re-abre el RSVP: el aviso de cambio lleva
+    botones nuevos y el callback debe resolver el event_id desde ese mensaje.
+    """
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO seen_invitations (event_id, user_id, telegram_message_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (event_id) DO UPDATE SET telegram_message_id = EXCLUDED.telegram_message_id
+            """,
+            (event_id, user_id, telegram_message_id),
+        )
+
+
+# ============================================================
+# tracked_events (watcher de cambios en Calendar)
+# ============================================================
+
+def get_tracked_events(user_id: str) -> Dict[str, dict]:
+    """Devuelve {event_id: snapshot} de todos los eventos rastreados."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            SELECT event_id, recurring_event_id, summary, start_raw, end_raw,
+                   start_ts, end_ts, location, description_hash, attendees, status
+            FROM tracked_events
+            WHERE user_id = %s
+            """,
+            (user_id,),
+        )
+        return {row["event_id"]: dict(row) for row in cur.fetchall()}
+
+
+def upsert_tracked_event(user_id: str, snap: dict) -> None:
+    """Inserta o actualiza el snapshot de un evento (idempotente)."""
+    with get_cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO tracked_events
+                (event_id, user_id, recurring_event_id, summary, start_raw, end_raw,
+                 start_ts, end_ts, location, description_hash, attendees, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id) DO UPDATE SET
+                recurring_event_id = EXCLUDED.recurring_event_id,
+                summary = EXCLUDED.summary,
+                start_raw = EXCLUDED.start_raw,
+                end_raw = EXCLUDED.end_raw,
+                start_ts = EXCLUDED.start_ts,
+                end_ts = EXCLUDED.end_ts,
+                location = EXCLUDED.location,
+                description_hash = EXCLUDED.description_hash,
+                attendees = EXCLUDED.attendees,
+                status = EXCLUDED.status,
+                last_seen_at = now()
+            """,
+            (
+                snap["event_id"], user_id, snap.get("recurring_event_id"),
+                snap["summary"], snap["start_raw"], snap["end_raw"],
+                snap.get("start_ts"), snap.get("end_ts"),
+                snap["location"], snap["description_hash"], snap["attendees"],
+                snap["status"],
+            ),
+        )
+
+
+def delete_tracked_event(event_id: str) -> None:
+    """Saca un evento del snapshot (cancelado o el usuario fue removido)."""
+    with get_cursor() as cur:
+        cur.execute("DELETE FROM tracked_events WHERE event_id = %s", (event_id,))
+
+
+def purge_past_tracked_events() -> int:
+    """Borra snapshots de eventos que terminaron hace más de un día."""
+    with get_cursor() as cur:
+        cur.execute(
+            "DELETE FROM tracked_events WHERE end_ts IS NOT NULL AND end_ts < now() - interval '1 day'"
+        )
+        return cur.rowcount
+
+
 # ============================================================
 # processed_notes (Fase 1 CoS — Granola dedup)
 # ============================================================

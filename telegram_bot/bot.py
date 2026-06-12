@@ -84,6 +84,95 @@ def format_invitation(event: dict) -> str:
     return "\n".join(lines)
 
 
+RESPONSE_LABEL = {
+    "accepted": "aceptado",
+    "declined": "rechazado",
+    "tentative": "tentativo",
+    "needsAction": "sin responder",
+}
+
+
+def format_new_event(event: dict, response_status: str) -> str:
+    """Evento nuevo donde el usuario quedó agregado sin RSVP pendiente
+    (p. ej. auto-aceptado). Los needsAction van por format_invitation."""
+    title = event.get("summary") or "(sin título)"
+    organizer = _fmt_organizer(event)
+    start = _fmt_dt(event.get("start", {}))
+    end = _fmt_dt(event.get("end", {}))
+    attendees = _fmt_attendees(event)
+    desc = (event.get("description") or "").strip()
+    location = (event.get("location") or "").strip()
+    status_label = RESPONSE_LABEL.get(response_status, response_status)
+
+    lines = [
+        "📌 <b>Te agregaron a un evento</b>",
+        f"<b>{html.escape(title)}</b>",
+        f"🗓 {html.escape(start)} → {html.escape(end)}",
+        f"👤 Organiza: {html.escape(organizer)}",
+        f"👥 Invitados: {html.escape(attendees)}",
+        f"🔖 Tu estado: {html.escape(status_label)}",
+    ]
+    if location:
+        lines.append(f"📍 {html.escape(location[:200])}")
+    if desc:
+        snippet = desc[:500] + ("…" if len(desc) > 500 else "")
+        lines.append(f"\n{html.escape(snippet)}")
+    return "\n".join(lines)
+
+
+def format_event_change(event: dict, changes: list, recurring_extra: int = 0) -> str:
+    """Aviso de cambios en un evento ya conocido."""
+    title = event.get("summary") or "(sin título)"
+    organizer = _fmt_organizer(event)
+    attendees = _fmt_attendees(event)
+
+    lines = [
+        "🔄 <b>Cambió un evento</b>",
+        f"<b>{html.escape(title)}</b>",
+        f"👤 Organiza: {html.escape(organizer)}",
+        f"👥 Invitados: {html.escape(attendees)}",
+        "",
+    ]
+    lines.extend(changes)
+    if recurring_extra:
+        lines.append(f"\n🔁 <i>Serie recurrente: aplica también a {recurring_extra} fecha(s) más.</i>")
+    return "\n".join(lines)
+
+
+def format_event_cancelled(summary: str, start_label: str, recurring_extra: int = 0) -> str:
+    """Aviso de cancelación (usa los datos del snapshot: el stub viene vacío)."""
+    lines = [
+        "❌ <b>Evento cancelado</b>",
+        f"<b>{html.escape(summary or '(sin título)')}</b>",
+        f"🗓 Era: {html.escape(start_label)}",
+    ]
+    if recurring_extra:
+        lines.append(f"\n🔁 <i>Serie recurrente: se cancelaron también {recurring_extra} fecha(s) más.</i>")
+    return "\n".join(lines)
+
+
+def format_event_removed(summary: str, start_label: str) -> str:
+    """El evento ya no aparece para el usuario (lo sacaron de la lista de invitados)."""
+    return (
+        "🚫 <b>Te quitaron de un evento</b> (o ya no tenés acceso)\n"
+        f"<b>{html.escape(summary or '(sin título)')}</b>\n"
+        f"🗓 Era: {html.escape(start_label)}"
+    )
+
+
+async def send_notice(app: Application, text: str, with_rsvp: bool = False) -> Optional[int]:
+    """Envía un aviso del watcher al chat autorizado. Devuelve el message_id."""
+    chat_id = int(os.environ["TELEGRAM_CHAT_ID"])
+    msg = await app.bot.send_message(
+        chat_id=chat_id,
+        text=text[:4096],
+        parse_mode=ParseMode.HTML,
+        reply_markup=rsvp_keyboard() if with_rsvp else None,
+        disable_web_page_preview=True,
+    )
+    return msg.message_id
+
+
 def rsvp_keyboard() -> InlineKeyboardMarkup:
     # callback_data corto (Telegram limita a 64 bytes). El event_id no entra:
     # event_ids de instancias recurrentes superan el límite. El handler resuelve
