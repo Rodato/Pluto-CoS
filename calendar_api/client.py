@@ -46,6 +46,35 @@ def list_events(
     return resp.get("items", [])
 
 
+def list_events_with_deleted(
+    time_min: datetime,
+    time_max: datetime,
+) -> List[dict]:
+    """Como list_events pero incluye cancelados (showDeleted) y pagina completo.
+
+    Usado por el watcher de cambios: los eventos cancelados llegan con
+    status='cancelled' (las instancias recurrentes canceladas pueden venir como
+    stubs sin start/attendees). Sin orderBy: los stubs no tienen startTime.
+    """
+    service = get_calendar_service()
+    items: List[dict] = []
+    page_token = None
+    while True:
+        resp = service.events().list(
+            calendarId="primary",
+            timeMin=_to_rfc3339(time_min),
+            timeMax=_to_rfc3339(time_max),
+            singleEvents=True,
+            showDeleted=True,
+            maxResults=250,
+            pageToken=page_token,
+        ).execute()
+        items.extend(resp.get("items", []))
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            return items
+
+
 def list_pending_invitations(
     time_min: datetime,
     time_max: datetime,

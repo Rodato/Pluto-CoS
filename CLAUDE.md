@@ -14,6 +14,7 @@ Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co):
 2. Detecta invitaciones nuevas (`responseStatus=needsAction`) y las notifica por Telegram.
 3. Permite responder RSVP (✅ aceptar / ❌ rechazar / ❓ tentativo) con botones inline.
 4. Responde consultas on-demand: `/hoy`, `/semana`, `/libre <fecha hora>`, + lenguaje natural.
+5. **Watcher de cambios (2026-06-12):** snapshot de eventos donde Daniel está citado (`tracked_events` en Neon, ventana 30 días). El cron de 15 min diffea y notifica: eventos nuevos donde lo agregaron sin RSVP pendiente, reprogramaciones, cambios de invitados/lugar/título/mensaje, cancelaciones y remociones. Eventos auto-organizados se excluyen (sus propios cambios no se notifican). Series recurrentes se agrupan en un solo aviso.
 
 **Briefing CoS — solo on-demand (`/briefing`)**
 - **Cron diario 8 AM DESACTIVADO (2026-06-12)** — Daniel no quiere el push matutino. Reactivar = volver a pasar `_briefing_job` a `build_scheduler` en `main.py`.
@@ -29,7 +30,7 @@ Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co):
 - **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas). ~~Cron diario 8 AM~~ desactivado 2026-06-12 (briefing solo on-demand vía `/briefing`)
 - **python-telegram-bot 21.6** — bot
 - **Google Calendar API v3** + OAuth2 **Installed flow** (scope `calendar.events`). Token se genera local con `oauth_local.py` y se pega en Railway como env var.
-- **Neon** (psycopg2) — `seen_invitations` (v1) + `tasks`, `processed_notes` (Fase 1 CoS). `pending_proposals` reservada para v2.
+- **Neon** (psycopg2) — `seen_invitations`, `tracked_events` (v1) + `tasks`, `processed_notes` (Fase 1 CoS). `pending_proposals` reservada para v2.
 - **OpenRouter** vía SDK `openai` (base_url=`https://openrouter.ai/api/v1`)
 - **Deploy:** Railway
 
@@ -131,7 +132,14 @@ Cada 15 min
   ├─ por cada invitación NO presente en seen_invitations:
   │    ├─ telegram_bot.bot.send_invitation() con botones ✅/❌/❓
   │    └─ DB: insert seen_invitations(event_id, notified_at)
-  └─ (callback inline RSVP → events.patch + DB update rsvp_status)
+  ├─ (callback inline RSVP → events.patch + DB update rsvp_status)
+  └─ scheduler.check_event_changes() — watcher (calendar_api/tracker.py)
+       ├─ list_events_with_deleted(now → +30d) + diff vs tracked_events
+       ├─ nuevos sin RSVP pendiente → "📌 Te agregaron a un evento"
+       ├─ reprogramación/invitados/lugar/título/mensaje → "🔄 Cambió un evento"
+       │    (si quedó needsAction, lleva botones RSVP y re-mapea message_id)
+       ├─ status=cancelled o evento ausente → "❌ cancelado" / "🚫 te quitaron"
+       └─ purge de snapshots con end < now-1d
 ```
 
 ## Comandos del bot
@@ -140,7 +148,7 @@ Cada 15 min
 | `/hoy` | Eventos de hoy |
 | `/semana` | Agenda de la semana |
 | `/libre <fecha hora>` | "/libre martes 3pm" → ¿hay algo a esa hora? |
-| `/revisar` | Fuerza chequeo manual de invitaciones (sin esperar al cron) |
+| `/revisar` | Fuerza chequeo manual de invitaciones + cambios/cancelaciones (sin esperar al cron) |
 | `/correos` | Correos que esperan respuesta (Gmail — filtro LLM) |
 | `/briefing` | Genera el briefing on-demand: Calendar + Gmail (única vía — el cron de las 8 AM está desactivado) |
 | ~~`/slack`~~ | **DESACTIVADO (2026-06-02)** — Slack fuera de alcance por ahora |

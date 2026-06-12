@@ -77,7 +77,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/hoy — eventos de hoy\n"
         "/semana — agenda de la semana\n"
         "/libre — slots libres\n"
-        "/revisar — chequear invitaciones ya\n"
+        "/revisar — chequear invitaciones + cambios/cancelaciones ya\n"
         "/correos — correos que esperan respuesta\n"
         "/briefing — briefing matutino on-demand (Calendar + Gmail)\n"
         "/pendientes — lista de tareas abiertas + botones ✅\n"
@@ -161,10 +161,14 @@ async def cmd_libre(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from scheduler import check_new_invitations
+    from scheduler import check_event_changes, check_new_invitations
+    await update.message.chat.send_action("typing")
     sent = await check_new_invitations(context.application)
+    counts = await check_event_changes(context.application)
     await update.message.reply_text(
-        f"🔎 Chequeo manual hecho. Invitaciones nuevas notificadas: {sent}."
+        "🔎 Chequeo manual hecho.\n"
+        f"Invitaciones nuevas: {sent} · Eventos nuevos: {counts['nuevos']} · "
+        f"Cambios: {counts['cambios']} · Cancelados: {counts['cancelados']}."
     )
 
 
