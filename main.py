@@ -21,7 +21,7 @@ from fastapi import FastAPI
 
 # --- DESACTIVADO (2026-06-11): Obsidian/Granola fuera del bot; trabajamos notas con Claude.
 # from obsidian.git_sync import bootstrap_vault
-from scheduler import build_scheduler, check_new_invitations, run_daily_briefing
+from scheduler import build_scheduler, check_new_invitations  # run_daily_briefing: DESACTIVADO 2026-06-12
 from telegram_bot import bot as tg_bot
 from telegram_bot import handlers as tg_handlers
 
@@ -42,10 +42,12 @@ async def lifespan(app: FastAPI):
     async def _invitations_job():
         await check_new_invitations(tg_app)
 
-    async def _briefing_job():
-        await run_daily_briefing(tg_app)
+    # DESACTIVADO (2026-06-12): briefing diario 8 AM fuera — Daniel no lo necesita.
+    # /briefing on-demand sigue activo. Reactivar = volver a pasar _briefing_job.
+    # async def _briefing_job():
+    #     await run_daily_briefing(tg_app)
 
-    scheduler = build_scheduler(_invitations_job, _briefing_job)
+    scheduler = build_scheduler(_invitations_job, briefing_callback=None)
 
     await tg_app.initialize()
     await tg_app.start()

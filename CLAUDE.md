@@ -15,7 +15,8 @@ Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co):
 3. Permite responder RSVP (✅ aceptar / ❌ rechazar / ❓ tentativo) con botones inline.
 4. Responde consultas on-demand: `/hoy`, `/semana`, `/libre <fecha hora>`, + lenguaje natural.
 
-**Briefing CoS — 8 AM diario (activo)**
+**Briefing CoS — solo on-demand (`/briefing`)**
+- **Cron diario 8 AM DESACTIVADO (2026-06-12)** — Daniel no quiere el push matutino. Reactivar = volver a pasar `_briefing_job` a `build_scheduler` en `main.py`.
 - Fuentes: Calendar (agenda del día) + Gmail (correos pendientes filtrados por LLM).
 - Prioriza tareas P0–P3, persiste en Neon (`tasks`), entrega por Telegram.
 - Granola/Obsidian: desactivado del bot — se trabaja directamente con Claude.
@@ -25,7 +26,7 @@ Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co):
 
 ## Stack
 - **FastAPI + Uvicorn** — healthcheck (`/`) para Railway. **Ya no sirve OAuth**.
-- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas) + cron diario 8 AM (briefing CoS, Fase 1)
+- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas). ~~Cron diario 8 AM~~ desactivado 2026-06-12 (briefing solo on-demand vía `/briefing`)
 - **python-telegram-bot 21.6** — bot
 - **Google Calendar API v3** + OAuth2 **Installed flow** (scope `calendar.events`). Token se genera local con `oauth_local.py` y se pega en Railway como env var.
 - **Neon** (psycopg2) — `seen_invitations` (v1) + `tasks`, `processed_notes` (Fase 1 CoS). `pending_proposals` reservada para v2.
@@ -71,7 +72,7 @@ python3 -m venv .venv
 - `USER_ID` — identificador interno del usuario (default `"daniel"`)
 - `USER_EMAIL` — email del usuario en Google Calendar (default `daniel@estudio-plural.co`). Se usa para identificar `attendees[me]`.
 - `TZ_NAME` — timezone para slots/horario laboral (default `America/Bogota`)
-- `BRIEFING_HOUR` — hora del briefing matutino CoS (default `8`)
+- `BRIEFING_HOUR` — hora del briefing matutino CoS (default `8`). **Sin efecto desde 2026-06-12** (cron diario desactivado)
 
 **Solo Railway:**
 - `GOOGLE_CREDENTIALS_JSON` — base64 de `credentials.json` (shared con ai-mail-forwarder)
@@ -141,7 +142,7 @@ Cada 15 min
 | `/libre <fecha hora>` | "/libre martes 3pm" → ¿hay algo a esa hora? |
 | `/revisar` | Fuerza chequeo manual de invitaciones (sin esperar al cron) |
 | `/correos` | Correos que esperan respuesta (Gmail — filtro LLM) |
-| `/briefing` | Genera el briefing matutino on-demand: Calendar + Gmail (sin esperar al cron de las 8 AM) |
+| `/briefing` | Genera el briefing on-demand: Calendar + Gmail (única vía — el cron de las 8 AM está desactivado) |
 | ~~`/slack`~~ | **DESACTIVADO (2026-06-02)** — Slack fuera de alcance por ahora |
 | `/pendientes` | Tareas abiertas (`tasks` Neon) con botones ✅ para marcar hecho |
 | `/autorizar` | Devuelve instrucciones para correr `oauth_local.py` (la auth es local, no se hace por Telegram) |
