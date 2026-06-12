@@ -315,10 +315,11 @@ def _footer(briefing: BriefingResult, hidden_count: int) -> str:
             f"📂 <i>{hidden_count} tareas menores en "
             f"<code>Briefings/{briefing.briefing_date.isoformat()}.md</code></i>"
         )
-    pieces.append(
-        f"<i>{briefing.notes_processed} notas procesadas · "
-        f"{briefing.notes_skipped_age} ignoradas por antigüedad</i>"
-    )
+    if briefing.notes_processed > 0 or briefing.notes_skipped_age > 0:
+        pieces.append(
+            f"<i>{briefing.notes_processed} notas procesadas · "
+            f"{briefing.notes_skipped_age} ignoradas por antigüedad</i>"
+        )
     return "\n".join(pieces)
 
 
@@ -382,8 +383,9 @@ def render_markdown(briefing: BriefingResult) -> str:
             parts.append("")
 
     parts.append("---")
-    parts.append(
-        f"_{briefing.notes_processed} notas procesadas, "
-        f"{briefing.notes_skipped_age} ignoradas por antigüedad._"
-    )
+    if briefing.notes_processed > 0 or briefing.notes_skipped_age > 0:
+        parts.append(
+            f"_{briefing.notes_processed} notas procesadas, "
+            f"{briefing.notes_skipped_age} ignoradas por antigüedad._"
+        )
     return "\n".join(parts)

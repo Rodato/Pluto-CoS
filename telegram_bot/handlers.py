@@ -78,9 +78,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/semana — agenda de la semana\n"
         "/libre — slots libres\n"
         "/revisar — chequear invitaciones ya\n"
-        "/briefing — generar briefing matutino on-demand\n"
+        "/correos — correos que esperan respuesta\n"
+        "/briefing — briefing matutino on-demand (Calendar + Gmail)\n"
         "/pendientes — lista de tareas abiertas + botones ✅\n"
-        "/autorizar — conectar Google Calendar\n\n"
+        "/autorizar — conectar Google Calendar/Gmail\n\n"
         "También podés escribirme en lenguaje natural ('¿qué tengo el viernes?', "
         "'¿cuándo tengo libre esta semana?')."
     )
@@ -492,9 +493,8 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("libre", cmd_libre))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
-    # --- DESACTIVADO (2026-06-02): Gmail + Slack fuera de alcance por ahora.
-    # Las funciones cmd_correos / cmd_slack quedan definidas abajo para reactivar.
-    # app.add_handler(CommandHandler("correos", cmd_correos))
+    app.add_handler(CommandHandler("correos", cmd_correos))
+    # --- DESACTIVADO (2026-06-02): Slack fuera de alcance por ahora.
     # app.add_handler(CommandHandler("slack", cmd_slack))
     app.add_handler(CommandHandler("pendientes", cmd_pendientes))
     app.add_handler(CallbackQueryHandler(on_task_done, pattern=r"^done:"))

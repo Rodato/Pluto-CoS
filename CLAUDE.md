@@ -5,19 +5,28 @@ Notas en: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Documentició
 Actualizar cuando cambien: esquema Neon, flujo OAuth, comandos del bot, deployment Railway, stack, **scope/fase vigente (v1 / Fase 1 CoS / etc.)**.
 No actualizar por: bugfixes menores, ajustes de mensajes del bot, cambios de copy.
 
-## Scope vigente: v1 (2026-05-11 →)
+## Scope vigente: Calendar + Gmail briefing (2026-06-11 →)
 
-Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co) con alcance **acotado al calendar**:
+Bot Telegram **single-user** (Daniel, daniel@estudio-plural.co):
+
+**Calendar (v1 — siempre activo)**
 1. Lee Google Calendar (read).
 2. Detecta invitaciones nuevas (`responseStatus=needsAction`) y las notifica por Telegram.
 3. Permite responder RSVP (✅ aceptar / ❌ rechazar / ❓ tentativo) con botones inline.
-4. Responde consultas on-demand sobre la agenda: `/hoy`, `/semana`, `/libre <fecha hora>`, + lenguaje natural resuelto por LLM.
+4. Responde consultas on-demand: `/hoy`, `/semana`, `/libre <fecha hora>`, + lenguaje natural.
 
-**No incluido en v1** (queda para v2): pipeline del vault de Granola, extracción de tareas, propuestas de bloques, **creación / edición / borrado de eventos**, envío de mensajes libres a attendees (Gmail).
+**Briefing CoS — solo on-demand (`/briefing`)**
+- **Cron diario 8 AM DESACTIVADO (2026-06-12)** — Daniel no quiere el push matutino. Reactivar = volver a pasar `_briefing_job` a `build_scheduler` en `main.py`.
+- Fuentes: Calendar (agenda del día) + Gmail (correos pendientes filtrados por LLM).
+- Prioriza tareas P0–P3, persiste en Neon (`tasks`), entrega por Telegram.
+- Granola/Obsidian: desactivado del bot — se trabaja directamente con Claude.
+- Slack: desactivado por ahora.
+
+**No incluido (queda para adelante):** creación/edición/borrado de eventos, Slack, sparring pages.
 
 ## Stack
 - **FastAPI + Uvicorn** — healthcheck (`/`) para Railway. **Ya no sirve OAuth**.
-- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas) + cron diario 8 AM (briefing CoS, Fase 1)
+- **APScheduler** — cron cada 15 min (chequeo de invitaciones nuevas). ~~Cron diario 8 AM~~ desactivado 2026-06-12 (briefing solo on-demand vía `/briefing`)
 - **python-telegram-bot 21.6** — bot
 - **Google Calendar API v3** + OAuth2 **Installed flow** (scope `calendar.events`). Token se genera local con `oauth_local.py` y se pega en Railway como env var.
 - **Neon** (psycopg2) — `seen_invitations` (v1) + `tasks`, `processed_notes` (Fase 1 CoS). `pending_proposals` reservada para v2.
@@ -34,17 +43,17 @@ El norte cambió de "v2 = pipeline Granola" a **briefing matutino tipo Chief-of-
 
 El v1 (calendar read + RSVP cada 15 min) sigue corriendo en paralelo.
 
-> **DESACTIVADO (2026-06-02):** Gmail (Fase 2) y Slack (Fase 3) están **apagados** en
-> producción — no daban buena señal. El briefing vive solo con Granola/Obsidian + el
-> aviso de eventos nuevos del calendario. El código sigue en disco (`gmail_api/`,
-> `slack_api/`, `llm/email_filter.py`, `llm/slack_filter.py`, `llm/outbound_filter.py`)
-> y los call-sites están comentados con marcadores `DESACTIVADO (2026-06-02)` en
-> `briefing/builder.py` y `telegram_bot/handlers.py`. Reactivar = descomentar esos puntos.
+> **Ajuste (2026-06-11):** El briefing vive ahora con **Calendar + Gmail**. Granola/Obsidian
+> se trabaja directamente con Claude (no desde el bot). Slack sigue desactivado.
+> Código inactivo: `obsidian/` (ya no se llama en el pipeline), `slack_api/`,
+> `llm/slack_filter.py`. Los call-sites están comentados con marcadores `DESACTIVADO` en
+> `briefing/builder.py`, `main.py` y `telegram_bot/handlers.py`.
+> Reactivar Gmail outbound = ya está activo. Reactivar Granola = descomentar bloque 1a en builder.py.
 
 ## Correr en local
 
 ```bash
-cd /Users/daniel/Documents/Dev/calendar-planner
+cd /Users/daniel/Documents/Dev/Pluto-CoS
 
 # Primera vez
 python3 -m venv .venv
@@ -63,14 +72,16 @@ python3 -m venv .venv
 - `USER_ID` — identificador interno del usuario (default `"daniel"`)
 - `USER_EMAIL` — email del usuario en Google Calendar (default `daniel@estudio-plural.co`). Se usa para identificar `attendees[me]`.
 - `TZ_NAME` — timezone para slots/horario laboral (default `America/Bogota`)
-- `BRIEFING_HOUR` — hora del briefing matutino CoS (default `8`)
-- `OBSIDIAN_VAULT_LOCAL_PATH` — solo local, path al vault iCloud: `/Users/daniel/Library/Mobile Documents/iCloud~md~obsidian/Documents/Estudio Plural`
+- `BRIEFING_HOUR` — hora del briefing matutino CoS (default `8`). **Sin efecto desde 2026-06-12** (cron diario desactivado)
 
-**Solo Railway** (en local se leen archivos del disco):
+**Solo Railway:**
 - `GOOGLE_CREDENTIALS_JSON` — base64 de `credentials.json` (shared con ai-mail-forwarder)
 - `GOOGLE_TOKEN_JSON` — base64 de `token.json` (sale de correr `oauth_local.py` local)
-- `RAILWAY_ENVIRONMENT` — lo setea Railway automáticamente; activa `bootstrap_vault()` + `pull_vault()` en `obsidian/git_sync.py`
-- `OBSIDIAN_VAULT_GIT_REPO` — URL HTTPS+token del repo `Rodato/obsidian-estudio-plural` (formato `https://<user>:<token>@github.com/Rodato/obsidian-estudio-plural.git`). En local el vault vive en iCloud; en Railway se clona desde GitHub al startup.
+
+**Inactivas (Obsidian desactivado del bot):**
+- ~~`OBSIDIAN_VAULT_LOCAL_PATH`~~ — ya no se usa en el pipeline del bot
+- ~~`RAILWAY_ENVIRONMENT`~~ — activaba `bootstrap_vault()`, que está comentado
+- ~~`OBSIDIAN_VAULT_GIT_REPO`~~ — el vault ya no se clona en Railway al startup
 
 ## Reglas duras (no romper)
 
@@ -130,8 +141,8 @@ Cada 15 min
 | `/semana` | Agenda de la semana |
 | `/libre <fecha hora>` | "/libre martes 3pm" → ¿hay algo a esa hora? |
 | `/revisar` | Fuerza chequeo manual de invitaciones (sin esperar al cron) |
-| `/briefing` | Genera el briefing matutino on-demand (sin esperar al cron de las 8 AM) |
-| ~~`/correos`~~ | **DESACTIVADO (2026-06-02)** — Gmail fuera de alcance por ahora |
+| `/correos` | Correos que esperan respuesta (Gmail — filtro LLM) |
+| `/briefing` | Genera el briefing on-demand: Calendar + Gmail (única vía — el cron de las 8 AM está desactivado) |
 | ~~`/slack`~~ | **DESACTIVADO (2026-06-02)** — Slack fuera de alcance por ahora |
 | `/pendientes` | Tareas abiertas (`tasks` Neon) con botones ✅ para marcar hecho |
 | `/autorizar` | Devuelve instrucciones para correr `oauth_local.py` (la auth es local, no se hace por Telegram) |
@@ -140,7 +151,7 @@ Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre 
 
 ## Repos GitHub
 - `Rodato/Pluto-CoS` (este repo, código — público). Local: `~/Documents/Dev/Pluto-CoS`. (Antes el dir local se llamaba `calendar-planner`; renombrado a `Pluto-CoS` para alinear con el repo.)
-- `Rodato/obsidian-estudio-plural` (privado, vault de Obsidian sincronizado por plugin Obsidian Git — Railway lo clona al startup via `OBSIDIAN_VAULT_GIT_REPO`)
+- `Rodato/obsidian-estudio-plural` (privado, vault de Obsidian — ya **no lo clona el bot**; se sincroniza por plugin Obsidian Git de forma independiente)
 
 ## Deploy
 - **Railway** con `Dockerfile` (no nixpacks/railpack). Railway usa Railpack por default y un `nixpacks.toml` es silenciosamente ignorado. Si necesitás system deps (como `git` para clonar el vault), editá el `Dockerfile`.
@@ -151,15 +162,11 @@ Mensajes libres → `llm/query.py` resuelve consultas en lenguaje natural sobre 
 3. Para Railway: pegar el base64 como `GOOGLE_TOKEN_JSON` (y `GOOGLE_CREDENTIALS_JSON` también base64 con `base64 -i credentials.json | pbcopy`)
 4. A partir de ahí el bot lee Calendar y responde RSVP sin más intervención. Refresh tokens no caducan (app "In Production" en Google Cloud).
 
-## Roadmap (pivot CoS 2026-05-19)
+## Historial de fases (pivot CoS 2026-05-19)
 
-**Fase 1 — siguiente**: briefing matutino 8 AM Bogotá
-- Cron diario en `scheduler.py` (existe el cron de 15 min de invitaciones; sumar uno diario)
-- Pipeline: `calendar_api` + `obsidian/reader.py` + `obsidian/parser.py` (ya hay esqueleto) → LLM extrae tareas → priorizar P0–P3 → insert en `tasks` (Neon) → mensaje a Telegram
-- Generar `Briefings/YYYY-MM-DD.md` en el vault (read-only desde el bot)
+- ✅ **Fase 1** (2026-05-19): briefing 8 AM con Calendar + Granola/Obsidian.
+- ✅ **Fase 2** (2026-06-11): Gmail activo; Granola/Obsidian removido del pipeline del bot (se trabaja con Claude directamente).
+- ⏸ **Fase 3**: Slack (desactivado — no daba buena señal).
+- ⏳ **Fase 4**: sparring pages en Obsidian + loop priorizado vs hecho.
 
-**Fase 2**: Gmail (compromisos en enviados + sin responder).
-**Fase 3**: Slack (bloqueos del equipo).
-**Fase 4**: sparring pages en Obsidian + loop priorizado vs hecho.
-
-Cuando se entre a la fase de creación de eventos (post-Fase 4), relajar la regla "solo lee + RSVP" para permitir `events.insert` tras confirmación. Descomentar `pending_proposals` en el schema.
+Cuando se entre a creación de eventos, relajar la regla "solo lee + RSVP" para permitir `events.insert` tras confirmación. Descomentar `pending_proposals` en el schema.
